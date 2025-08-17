@@ -1,0 +1,35 @@
+# Ignore Django Rest Framework (DRF) migrations
+*/migrations/
+
+# Ignore Python bytecode cache files
+__pycache__/
+
+/node_modules
+.DS_Store
+.env
+
+
+# Ignore compiled files
+*.class
+*.jar
+*.war
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.iml
+
+# Ignore log files
+*.log
+src/*.log
+src/*.log.*
+
+# Ignore other potential log files
+*.log
+
+# Ignore migrations directories
+migrations/
+
+celerybeat.pid
+
+static
