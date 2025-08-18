@@ -6,6 +6,7 @@ from django.db import models
 # models.py
 class Video(models.Model):
     id = models.AutoField(primary_key=True)
+    project_name = models.CharField(max_length=255)
     video_file_title = models.CharField(max_length=255, blank=True, null=True)
     video_file = models.FileField(upload_to="videos/")
     trk_file_title = models.CharField(max_length=255, blank=True, null=True)

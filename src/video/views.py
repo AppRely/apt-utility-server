@@ -21,6 +21,14 @@ class VideoViewSet(viewsets.ModelViewSet):
     operation_description="Upload a new video file",
     manual_parameters=[
         openapi.Parameter(
+            name="project_name",
+            in_=openapi.IN_FORM,
+            type=openapi.TYPE_STRING,
+            description="Name of the project associated with the video",
+            required=True,
+            example="My Project",
+        ),
+        openapi.Parameter(
             name="video_file",
             in_=openapi.IN_FORM,
             type=openapi.TYPE_FILE,
