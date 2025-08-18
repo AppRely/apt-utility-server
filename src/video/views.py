@@ -21,19 +21,34 @@ class VideoViewSet(viewsets.ModelViewSet):
     operation_description="Upload a new video file",
     manual_parameters=[
         openapi.Parameter(
-            name="file",
+            name="video_file",
             in_=openapi.IN_FORM,
             type=openapi.TYPE_FILE,
             description="Video file to upload (e.g., .mp4, .avi, .mov, .mkv)",
             required=True,
         ),
         openapi.Parameter(
-            name="title",
+            name="trk_file",
+            in_=openapi.IN_FORM,
+            type=openapi.TYPE_FILE,
+            description="Video file to upload (e.g., .mp4, .avi, .mov, .mkv)",
+            required=True,
+        ),
+        openapi.Parameter(
+            name="video_file_title",
             in_=openapi.IN_FORM,
             type=openapi.TYPE_STRING,
             description="Title of the video",
             required=False,
             example="Sample Video",
+        ),
+        openapi.Parameter(
+            name="trk_file_title",
+            in_=openapi.IN_FORM,
+            type=openapi.TYPE_STRING,
+            description="Title of the track file",
+            required=False,
+            example="Sample Track",
         ),
         openapi.Parameter(
             name="description",
