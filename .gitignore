@@ -33,3 +33,6 @@ migrations/
 celerybeat.pid
 
 static
+
+media/videos/
+media/trks/
