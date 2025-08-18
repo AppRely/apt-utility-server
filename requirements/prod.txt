@@ -23,7 +23,7 @@ djangorestframework==3.16.0
 djangorestframework-simplejwt==5.5.0
 Markdown==3.8
 drf-yasg==1.21.10
-django-filter==2.5.1
+django-filter==25.1
 django-cors-headers==4.7.0
 django-rest-passwordreset==1.5.0
 django-rest-swagger==2.2.0

@@ -9,8 +9,9 @@ from os.path import join
 
 TESTING = sys.argv[1:2] == ['test']
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+ROOT_DIR = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 if not TESTING:
     dotenv.read_dotenv(ROOT_DIR)
 
@@ -25,7 +26,8 @@ INSTALLED_APPS = (
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'jet',
+    'unfold',
+    'unfold.contrib.filters',
     'django.contrib.admin',
     # Third party apps
     'rest_framework',  # utilities for rest apis
@@ -34,9 +36,9 @@ INSTALLED_APPS = (
     'django_rest_passwordreset',  # for reset password endpoints
     'drf_yasg',  # swagger api
     'easy_thumbnails',  # image lib
-    'social_django',  # social login
+    # 'social_django',  # social login
     'corsheaders',  # cors handling
-    'django_inlinecss',  # inline css in templates
+    # 'django_inlinecss',  # inline css in templates
     'django_summernote',  # text editor
     'django_celery_beat',  # task scheduler
     'djmoney',  # money object
@@ -52,6 +54,7 @@ INSTALLED_APPS = (
     'src.social',
     'src.files',
     'src.common',
+    'src.video',
     # Third party optional apps
     # app must be placed somewhere after all the apps that are going to be generating activities
     # 'actstream',                  # activity stream
@@ -76,10 +79,10 @@ ROOT_URLCONF = 'src.urls'
 WSGI_APPLICATION = 'src.wsgi.application'
 
 # Email
-EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
-EMAIL_PORT = os.getenv('EMAIL_PORT', 1025)
-EMAIL_FROM = os.getenv('EMAIL_FROM', 'noreply@somehost.local')
+# EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+# EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+# EMAIL_PORT = os.getenv('EMAIL_PORT', 1025)
+# EMAIL_FROM = os.getenv('EMAIL_FROM', 'noreply@somehost.local')
 
 # Celery
 BROKER_URL = os.getenv('BROKER_URL', 'redis://redis:6379')
@@ -357,3 +360,9 @@ SUMMERNOTE_CONFIG = {
 }
 
 DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
+
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'api_key': {'type': 'apiKey', 'in': 'header', 'name': 'Authorization'}
+    },
+}
