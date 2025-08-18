@@ -18,34 +18,39 @@ class VideoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]  # Require authentication
 
     @swagger_auto_schema(
-        operation_description="Upload a new video file",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            required=['file'],
-            properties={
-                'file': openapi.Schema(
-                    type=openapi.TYPE_FILE,  # Use TYPE_FILE for file input
-                    description="Video file to upload (e.g., .mp4, .avi, .mov, .mkv)"
-                ),
-                'title': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description="Title of the video",
-                    example="Sample Video"
-                ),
-                'description': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description="Optional description of the video",
-                    example="A sample video description"
-                ),
-            },
+    operation_description="Upload a new video file",
+    manual_parameters=[
+        openapi.Parameter(
+            name="file",
+            in_=openapi.IN_FORM,
+            type=openapi.TYPE_FILE,
+            description="Video file to upload (e.g., .mp4, .avi, .mov, .mkv)",
+            required=True,
         ),
+        openapi.Parameter(
+            name="title",
+            in_=openapi.IN_FORM,
+            type=openapi.TYPE_STRING,
+            description="Title of the video",
+            required=False,
+            example="Sample Video",
+        ),
+        openapi.Parameter(
+            name="description",
+                in_=openapi.IN_FORM,
+                type=openapi.TYPE_STRING,
+                description="Optional description of the video",
+                required=False,
+                example="A sample video description",
+            ),
+        ],
         responses={
             201: openapi.Response("Video uploaded successfully", VideoSerializer),
             400: openapi.Response("Bad Request", examples={
                 "application/json": {
                     "file": ["Only video files (.mp4, .avi, .mov, .mkv) are allowed."]
                 }
-            })
+            }),
         }
     )
     def create(self, request, *args, **kwargs):
