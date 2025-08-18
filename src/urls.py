@@ -42,12 +42,17 @@ urlpatterns = [
     path('api/v1/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/v1/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/v1/', include((router.urls, 'v1'))),
+    path(
+        'api/v1/password_reset/',
+        include('django_rest_passwordreset.urls', namespace='password_reset'),
+    ),
     # path('api/v1/videos/upload/', VideoViewSet.as_view(), name='video-upload'),
     path('swagger<str:format>/', schema_view.without_ui(cache_timeout=0), name='schema-json'),
     path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
     path('health/', include('health_check.urls')),
     re_path(r'^$', RedirectView.as_view(url='/swagger/', permanent=False)),
+    path('accounts/', include('allauth.urls')),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # ✅ Custom 404 handler

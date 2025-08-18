@@ -36,8 +36,13 @@ INSTALLED_APPS = (
     'django_rest_passwordreset',  # for reset password endpoints
     'drf_yasg',  # swagger api
     'easy_thumbnails',  # image lib
+    'rest_framework_simplejwt.token_blacklist',
+
     # 'social_django',  # social login
     'corsheaders',  # cors handling
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
     # 'django_inlinecss',  # inline css in templates
     'django_summernote',  # text editor
     'django_celery_beat',  # task scheduler
@@ -64,13 +69,14 @@ INSTALLED_APPS = (
 MIDDLEWARE = (
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'social_django.middleware.SocialAuthExceptionMiddleware',
+    # 'social_django.middleware.SocialAuthExceptionMiddleware',
 )
 
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', '#p7&kxb7y^yq8ahfw5%$xh=f8=&1y*5+a5($8w_f7kw!-qig(j')
@@ -124,6 +130,7 @@ USE_I18N = False
 USE_L10N = True
 USE_TZ = True
 LOGIN_REDIRECT_URL = '/'
+LOGIN_URL = '/accounts/login/'
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/2.0/howto/static-files/
