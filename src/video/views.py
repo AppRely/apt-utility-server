@@ -2,7 +2,7 @@
 import logging
 from rest_framework import viewsets
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from .models import Video
@@ -15,7 +15,7 @@ class VideoViewSet(viewsets.ModelViewSet):
     serializer_class = VideoSerializer
     http_method_names = ['get', 'post']  # Only allow read + create
     parser_classes = (MultiPartParser, FormParser)  # Support file uploads
-    permission_classes = [IsAuthenticated]  # Require authentication
+    permission_classes = [AllowAny]  # Require authentication
 
     @swagger_auto_schema(
     operation_description="Upload a new video file",

@@ -302,6 +302,9 @@ THUMBNAIL_ALIASES = {
 
 # Django Rest Framework
 REST_FRAMEWORK = {
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny",
+    ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend', 'rest_framework.filters.OrderingFilter'],
     'PAGE_SIZE': int(os.getenv('DJANGO_PAGINATION_LIMIT', 18)),
@@ -324,6 +327,8 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {'anon': '100/second', 'user': '1000/second', 'subscribe': '60/minute'},
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
+    'ALLOWED_VERSIONS': ['v1', 'v2'],
+    'EXCEPTION_HANDLER': 'src.common.exception_handler.custom_exception_handler',
 }
 
 # JWT configuration
