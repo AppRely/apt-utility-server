@@ -196,7 +196,7 @@ LOGGING = {
     'formatters': {
         'django.server': {
             '()': 'django.utils.log.ServerFormatter',
-            'format': '[%(server_time)s] %(message)s',
+            'format': '[%(asctime)s] %(message)s',
         },
         'verbose': {'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'},
         'simple': {'format': '%(levelname)s %(message)s'},
@@ -328,7 +328,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {'anon': '100/second', 'user': '1000/second', 'subscribe': '60/minute'},
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
     'ALLOWED_VERSIONS': ['v1', 'v2'],
-    'EXCEPTION_HANDLER': 'src.common.exception_handler.custom_exception_handler',
+    # 'EXCEPTION_HANDLER': 'src.common.exception_handler.custom_exception_handler',
 }
 
 # JWT configuration
