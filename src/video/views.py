@@ -1,7 +1,5 @@
 import logging
 import os
-import json
-import h5py
 import base64
 import numpy as np
 import cv2

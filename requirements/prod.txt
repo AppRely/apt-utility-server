@@ -58,3 +58,6 @@ pandas==2.2.3
 cryptography==45.0.2
 
 
+h5py==3.8.0
+opencv-python==4.5.5.64
+wxPython==4.2.1

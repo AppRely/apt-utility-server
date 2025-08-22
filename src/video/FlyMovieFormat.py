@@ -9,10 +9,6 @@ import os.path
 import numpy as nx
 from numpy import nan
 
-import time
-
-import math
-
 # version 1 formats:
 VERSION_FMT = '<I'
 FORMAT_LEN_FMT = '<I'

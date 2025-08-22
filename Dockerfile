@@ -8,19 +8,46 @@ ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 EXPOSE 8000
 
-# Install system dependencies
+# Install system/build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-traditional \
     apt-transport-https \
     curl \
     gnupg \
     git \
-    libpq-dev \
     gcc \
+    g++ \
+    make \
     binutils \
+    build-essential \
+    python3-dev \
+    libpq-dev \
+    libgtk-3-dev \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    libsdl2-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libnotify-dev \
+    freeglut3-dev \
+    libsm-dev \
+    libxext-dev \
+    libxrender-dev \
+    libjpeg-dev \
+    libtiff-dev \
+    libhdf5-dev \
+    libopenblas-dev \
+    liblapack-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libv4l-dev \
+    libxvidcore-dev \
+    libx264-dev \
+    ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
-# 🔧 Export GDAL paths
+
+# Optional: For GDAL or PROJ (only if your app uses these)
 ENV PROJ_LIB=/usr/share/proj
 
 # Install wait-for script
