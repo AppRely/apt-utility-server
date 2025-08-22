@@ -1,9 +1,11 @@
 import logging
 import os
+import json
+import h5py
 import base64
-import cv2
 import numpy as np
-import math
+import cv2
+
 from django.http import FileResponse, HttpResponse, JsonResponse
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -12,27 +14,32 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
+
 from .models import Video
 from .serializers import VideoSerializer
 
-# Import TrkFile.py functions/classes
-from .TrkFile import Trk  # Update this import if TrkFile.py is elsewhere
+# Import Movie class from movies.py and Trk from TrkFile.py
+from .movies import Movie
+from .TrkFile import Trk
 
 logger = logging.getLogger(__name__)
 
+
 def replace_nan_with_none(obj):
-    if isinstance(obj, float) and math.isnan(obj):
+    import math
+
+    if isinstance(obj, float) and (math.isnan(obj)):
         return None
     elif isinstance(obj, list):
         return [replace_nan_with_none(x) for x in obj]
     else:
         return obj
 
+
 class VideoViewSet(viewsets.ModelViewSet):
     """
     API endpoint for managing video uploads, streaming, and metadata.
-    Supports full CRUD operations and HTTP range-based streaming.
-    Also provides frame-level and TRK file access.
+    Uses APT's movies.py Movie class for all video/frame access.
     """
 
     queryset = Video.objects.all()
@@ -98,26 +105,30 @@ class VideoViewSet(viewsets.ModelViewSet):
     def frames(self, request, pk=None):
         """
         GET /videos/{id}/frames/ → Get list of all frame numbers and thumbnails for carousel UI.
+        Uses Movie class for frame extraction.
         """
         video = self.get_object()
         video_path = video.video_file.path
-        cap = cv2.VideoCapture(video_path)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_urls = []
-        # Limit for demo/preview carousel, adjust as needed
-        MAX_FRAMES = min(100, total_frames)
-        for i in range(MAX_FRAMES):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            # Resize for thumbnail (e.g., 160x90)
-            thumb = cv2.resize(frame, (160, 90))
-            _, img_encoded = cv2.imencode('.jpg', thumb)
-            thumb_b64 = base64.b64encode(img_encoded).decode('ascii')
-            frame_urls.append({"frame_number": i, "thumbnail": f"data:image/jpeg;base64,{thumb_b64}"})
-        cap.release()
-        return JsonResponse({"frames": frame_urls, "total_frames": total_frames})
+        try:
+            movie = Movie(video_path)
+            total_frames = movie.get_n_frames()
+            frame_urls = []
+            MAX_FRAMES = min(100, total_frames)
+            for i in range(MAX_FRAMES):
+                try:
+                    frame, _ = movie.get_frame(i)
+                except Exception as e:
+                    continue
+                # For color or grayscale, ensure 3-channel for jpeg
+                if len(frame.shape) == 2:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+                thumb = cv2.resize(frame, (160, 90))
+                _, img_encoded = cv2.imencode('.jpg', thumb)
+                thumb_b64 = base64.b64encode(img_encoded).decode('ascii')
+                frame_urls.append({"frame_number": i, "thumbnail": f"data:image/jpeg;base64,{thumb_b64}"})
+            return JsonResponse({"frames": frame_urls, "total_frames": total_frames})
+        except Exception as e:
+            return JsonResponse({"error": f"Error extracting frames: {str(e)}"}, status=500)
 
     @swagger_auto_schema(
         operation_description="Get a specific frame image (base64 JPEG), video metadata, and tracking (TRK) data for the given frame number.",
@@ -128,20 +139,24 @@ class VideoViewSet(viewsets.ModelViewSet):
     def frame(self, request, pk=None, frame_number=None):
         """
         GET /videos/{id}/frame/{frame_number}/ → Get frame image, video metadata, and trk data.
+        Uses Movie class for frame extraction.
         """
         video = self.get_object()
         frame_number = int(frame_number)
         video_path = video.video_file.path
-        # Extract frame image
-        cap = cv2.VideoCapture(video_path)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-        ret, frame = cap.read()
-        cap.release()
-        if not ret:
-            return JsonResponse({"error": "Frame not found"}, status=404)
-        _, img_encoded = cv2.imencode('.jpg', frame)
-        img_b64 = base64.b64encode(img_encoded).decode('ascii')
-        # Get trk data for frame
+        try:
+            movie = Movie(video_path)
+            nframes = movie.get_n_frames()
+            if frame_number < 0 or frame_number >= nframes:
+                return JsonResponse({"error": "Frame not found"}, status=404)
+            frame, timestamp = movie.get_frame(frame_number)
+            if len(frame.shape) == 2:
+                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            _, img_encoded = cv2.imencode('.jpg', frame)
+            img_b64 = base64.b64encode(img_encoded).decode('ascii')
+        except Exception as e:
+            return JsonResponse({"error": f"Frame extraction error: {str(e)}"}, status=500)
+
         trk_path = getattr(video, 'trk_file', None)
         trk_data = None
         if trk_path and os.path.exists(trk_path.path):
@@ -153,8 +168,10 @@ class VideoViewSet(viewsets.ModelViewSet):
                 trk_data = frame_trk_data
             except Exception as e:
                 trk_data = None
+
         response = {
             "frame_number": frame_number,
+            "timestamp": timestamp,
             "image": f"data:image/jpeg;base64,{img_b64}",
             "trk_data": trk_data,
             "video_id": video.pk,
@@ -213,11 +230,13 @@ class VideoViewSet(viewsets.ModelViewSet):
             return JsonResponse({"error": f"Failed to get TRK data: {str(e)}"}, status=500)
 
     @swagger_auto_schema(
-        operation_description="Upload a new video file and its associated TRK tracking file. Required fields: project_name, video_file, trk_file.",
+        operation_description="Upload a new video file with TRK data",
         manual_parameters=[
-            openapi.Parameter("project_name", openapi.IN_FORM, type=openapi.TYPE_STRING, required=True, description="Project name for the video"),
-            openapi.Parameter("video_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Video file to upload (.mp4, .avi, etc.)"),
-            openapi.Parameter("trk_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Tracking file to upload (.trk, .mat, etc.)"),
+            openapi.Parameter(
+                "project_name", openapi.IN_FORM, type=openapi.TYPE_STRING, required=True, description="Project name"
+            ),
+            openapi.Parameter("video_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Video file"),
+            openapi.Parameter("trk_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Track file"),
         ],
         responses={201: VideoSerializer, 400: "Bad Request"},
     )
@@ -229,17 +248,11 @@ class VideoViewSet(viewsets.ModelViewSet):
             logger.error("Error uploading video: %s", str(e), exc_info=True)
             raise
 
-    @swagger_auto_schema(
-        operation_description="List all uploaded videos with metadata.",
-        responses={200: 'List of videos'}
-    )
+    @swagger_auto_schema(operation_description="List all uploaded videos")
     def list(self, request, *args, **kwargs):
         return super().list(request, *args, **kwargs)
 
-    @swagger_auto_schema(
-        operation_description="Retrieve metadata for a video, including streaming URLs for the video and its TRK file.",
-        responses={200: 'Video metadata and stream URLs'}
-    )
+    @swagger_auto_schema(operation_description="Retrieve video metadata and stream URLs")
     def retrieve(self, request, *args, **kwargs):
         """
         GET /videos/{id}/ → Only return metadata + URLs. (trk not parsed here)
