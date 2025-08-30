@@ -1,7 +1,6 @@
 # FlyMovieFormat.py
 # KMB 11/06/2008
 
-import sys
 import struct
 import warnings
 import os.path

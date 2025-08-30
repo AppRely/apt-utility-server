@@ -11,8 +11,6 @@ import glob
 
 import cv2
 import numpy as num
-import wx
-
 from .params import params
 import logging
 
@@ -27,9 +25,14 @@ __version__ = "0.3b"
 try:
     from .FlyMovieFormat import NoMoreFramesException, FlyMovie
 except ImportError:
-
     class NoMoreFramesException(Exception):
         pass
+
+try:
+    import wx
+except ImportError:
+    wx = None
+
 
 
 try:

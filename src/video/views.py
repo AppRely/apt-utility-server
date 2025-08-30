@@ -1,7 +1,6 @@
 import logging
 import os
 import base64
-import numpy as np
 import cv2
 
 from django.http import FileResponse, HttpResponse, JsonResponse
