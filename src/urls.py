@@ -22,9 +22,9 @@ from src.video.views import VideoViewSet
 
 schema_view = get_schema_view(
     openapi.Info(
-        title="BFC API",
+        title="APT Utility API",
         default_version="v1",
-        description="API documentation for BFC project",
+        description="API documentation for APT Utility project",
     ),
     public=True,
     permission_classes=(permissions.AllowAny,),

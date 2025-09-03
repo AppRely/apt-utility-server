@@ -12,5 +12,5 @@ docker-compose-swarm.yml
 Dockerfile
 .dockerignore
 .drone.yml
-
+db-data/
 README.md

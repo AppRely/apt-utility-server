@@ -1,15 +1,15 @@
-version: '3'
+# version: '3'
 services:
   db:
     image: postgres:14.2
     ports:
-      - 5433:5432
+      - 5432:5432
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - db-data:/data/postgres
+      - ./db-data:/var/lib/postgresql/data
 
   web:
     build:
