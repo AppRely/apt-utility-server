@@ -4,7 +4,6 @@
 import multiprocessing
 import os
 import struct
-import sys
 import traceback
 import importlib
 import glob

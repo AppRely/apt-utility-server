@@ -384,7 +384,7 @@ class FlyMovieSaver:
             if self.compressor == 'non':
                 self.compress_func = lambda x: x
             elif self.compressor == 'lzo':
-                import lzo
+                import lzo # TODO: install python-lzo to save video in compressed format
                 self.compress_func = lzo.compress
             else:
                 raise ValueError("unknown compressor '%s'"%(self.compressor,))

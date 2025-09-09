@@ -2,7 +2,8 @@ import logging
 import os
 import base64
 import cv2
-
+import math
+import numpy as np
 from django.http import FileResponse, HttpResponse, JsonResponse
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -23,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 def replace_nan_with_none(obj):
-    import math
 
     if isinstance(obj, float) and (math.isnan(obj)):
         return None
@@ -71,7 +71,7 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         operation_description="Stream the video file with HTTP Range support for efficient playback and seeking. Returns partial content if Range header is provided, otherwise streams the full file.",
-        responses={206: 'Partial Content', 200: 'Full Content', 404: 'Not Found'}
+        responses={206: 'Partial Content', 200: 'Full Content', 404: 'Not Found'},
     )
     @action(detail=True, methods=['get'], url_path='stream')
     def stream(self, request, pk=None):
@@ -96,7 +96,7 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         operation_description="Get a list of frame numbers and base64-encoded thumbnails for the video. Useful for carousel or preview UI.",
-        responses={200: 'JSON with frame thumbnails'}
+        responses={200: 'JSON with frame thumbnails'},
     )
     @action(detail=True, methods=['get'], url_path='frames')
     def frames(self, request, pk=None):
@@ -129,8 +129,12 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         operation_description="Get a specific frame image (base64 JPEG), video metadata, and tracking (TRK) data for the given frame number.",
-        manual_parameters=[openapi.Parameter('frame_number', openapi.IN_PATH, type=openapi.TYPE_INTEGER, required=True, description='Frame number to fetch')],
-        responses={200: 'JSON with frame image and TRK data', 404: 'Frame not found'}
+        manual_parameters=[
+            openapi.Parameter(
+                'frame_number', openapi.IN_PATH, type=openapi.TYPE_INTEGER, required=True, description='Frame number to fetch'
+            )
+        ],
+        responses={200: 'JSON with frame image and TRK data', 404: 'Frame not found'},
     )
     @action(detail=True, methods=['get'], url_path='frame/(?P<frame_number>\\d+)')
     def frame(self, request, pk=None, frame_number=None):
@@ -182,7 +186,7 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         operation_description="Stream/download the raw TRK file content for the video. Returns the file as an attachment.",
-        responses={200: 'TRK file', 404: 'TRK file not found'}
+        responses={200: 'TRK file', 404: 'TRK file not found'},
     )
     @action(detail=True, methods=['get'], url_path='stream-trk')
     def stream_trk(self, request, pk=None):
@@ -204,8 +208,12 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         operation_description="Get tracking (TRK) data for a specific frame number from the TRK file.",
-        manual_parameters=[openapi.Parameter('frame_number', openapi.IN_PATH, type=openapi.TYPE_INTEGER, required=True, description='Frame number to fetch')],
-        responses={200: 'JSON with TRK data', 404: 'TRK file not found', 500: 'Error reading TRK data'}
+        manual_parameters=[
+            openapi.Parameter(
+                'frame_number', openapi.IN_PATH, type=openapi.TYPE_INTEGER, required=True, description='Frame number to fetch'
+            )
+        ],
+        responses={200: 'JSON with TRK data', 404: 'TRK file not found', 500: 'Error reading TRK data'},
     )
     @action(detail=True, methods=['get'], url_path='trk/(?P<frame_number>\\d+)')
     def trk_frame(self, request, pk=None, frame_number=None):
@@ -219,10 +227,45 @@ class VideoViewSet(viewsets.ModelViewSet):
             return JsonResponse({"error": "TRK file not found"}, status=404)
         try:
             trk = Trk(trk_path.path)
-            frame_trk_data = trk.getframe(frame_number)
-            frame_trk_data = frame_trk_data.tolist() if hasattr(frame_trk_data, 'tolist') else str(frame_trk_data)
-            frame_trk_data = replace_nan_with_none(frame_trk_data)
-            return JsonResponse({"frame_number": frame_number, "trk_data": frame_trk_data})
+            # Use TrkFile.py API for all relevant data
+            frame_data = trk.getframe(frame_number)  # returns frame data (could be ndarray or list)
+            # Use startframes, endframes, nframes, etc. from Trk/Tracklet
+            startframes = getattr(trk, 'startframes', None)
+            endframes = getattr(trk, 'endframes', None)
+            nframes = getattr(trk, 'nframes', None)
+            # If available, use get_min_max_val, get_idx_vals, etc.
+            min_val, max_val = None, None
+            if hasattr(trk, 'get_min_max_val'):
+                try:
+                    min_val, max_val = trk.get_min_max_val()
+                except Exception:
+                    min_val, max_val = None, None
+            # Trajectory: if Trk has a trajectory method, use it; else, fallback to mean
+            trajectory = None
+            if hasattr(trk, 'trajectory'):
+                try:
+                    trajectory = trk.trajectory(frame_number)
+                except Exception:
+                    trajectory = None
+            else:
+                # fallback: mean of frame_data if possible
+                try:
+                    arr = np.array(frame_data)
+                    trajectory = np.mean(arr, axis=(0, 1)).tolist() if arr.ndim >= 2 else None
+                except Exception:
+                    trajectory = None
+            # Compose response
+            result = {
+                "frame_number": frame_number,
+                "frame_data": replace_nan_with_none(frame_data.tolist() if hasattr(frame_data, 'tolist') else frame_data),
+                "startframes": replace_nan_with_none(startframes.tolist() if hasattr(startframes, 'tolist') else startframes),
+                "endframes": replace_nan_with_none(endframes.tolist() if hasattr(endframes, 'tolist') else endframes),
+                "nframes": replace_nan_with_none(nframes.tolist() if hasattr(nframes, 'tolist') else nframes),
+                "min_val": min_val,
+                "max_val": max_val,
+                "trajectory": replace_nan_with_none(trajectory),
+            }
+            return JsonResponse(result)
         except Exception as e:
             return JsonResponse({"error": f"Failed to get TRK data: {str(e)}"}, status=500)
 
