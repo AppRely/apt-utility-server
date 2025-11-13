@@ -6,10 +6,11 @@
 .gitignore
 
 deploy.sh
+venv/
 docker-compose.yml
 docker-compose-swarm.yml
 Dockerfile
 .dockerignore
 .drone.yml
-
+db-data/
 README.md

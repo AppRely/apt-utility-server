@@ -7,7 +7,7 @@ __pycache__/
 /node_modules
 .DS_Store
 .env
-
+db-data/
 
 # Ignore compiled files
 *.class
@@ -33,3 +33,6 @@ migrations/
 celerybeat.pid
 
 static
+
+media/videos/
+media/trks/

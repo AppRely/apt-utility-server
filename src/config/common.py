@@ -9,8 +9,9 @@ from os.path import join
 
 TESTING = sys.argv[1:2] == ['test']
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+ROOT_DIR = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 if not TESTING:
     dotenv.read_dotenv(ROOT_DIR)
 
@@ -25,7 +26,8 @@ INSTALLED_APPS = (
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'jet',
+    'unfold',
+    'unfold.contrib.filters',
     'django.contrib.admin',
     # Third party apps
     'rest_framework',  # utilities for rest apis
@@ -34,9 +36,14 @@ INSTALLED_APPS = (
     'django_rest_passwordreset',  # for reset password endpoints
     'drf_yasg',  # swagger api
     'easy_thumbnails',  # image lib
-    'social_django',  # social login
+    'rest_framework_simplejwt.token_blacklist',
+
+    # 'social_django',  # social login
     'corsheaders',  # cors handling
-    'django_inlinecss',  # inline css in templates
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    # 'django_inlinecss',  # inline css in templates
     'django_summernote',  # text editor
     'django_celery_beat',  # task scheduler
     'djmoney',  # money object
@@ -52,6 +59,7 @@ INSTALLED_APPS = (
     'src.social',
     'src.files',
     'src.common',
+    'src.video',
     # Third party optional apps
     # app must be placed somewhere after all the apps that are going to be generating activities
     # 'actstream',                  # activity stream
@@ -61,13 +69,14 @@ INSTALLED_APPS = (
 MIDDLEWARE = (
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'allauth.account.middleware.AccountMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'social_django.middleware.SocialAuthExceptionMiddleware',
+    # 'social_django.middleware.SocialAuthExceptionMiddleware',
 )
 
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', '#p7&kxb7y^yq8ahfw5%$xh=f8=&1y*5+a5($8w_f7kw!-qig(j')
@@ -76,10 +85,10 @@ ROOT_URLCONF = 'src.urls'
 WSGI_APPLICATION = 'src.wsgi.application'
 
 # Email
-EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
-EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
-EMAIL_PORT = os.getenv('EMAIL_PORT', 1025)
-EMAIL_FROM = os.getenv('EMAIL_FROM', 'noreply@somehost.local')
+# EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+# EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+# EMAIL_PORT = os.getenv('EMAIL_PORT', 1025)
+# EMAIL_FROM = os.getenv('EMAIL_FROM', 'noreply@somehost.local')
 
 # Celery
 BROKER_URL = os.getenv('BROKER_URL', 'redis://redis:6379')
@@ -121,6 +130,7 @@ USE_I18N = False
 USE_L10N = True
 USE_TZ = True
 LOGIN_REDIRECT_URL = '/'
+LOGIN_URL = '/accounts/login/'
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/2.0/howto/static-files/
@@ -186,7 +196,7 @@ LOGGING = {
     'formatters': {
         'django.server': {
             '()': 'django.utils.log.ServerFormatter',
-            'format': '[%(server_time)s] %(message)s',
+            'format': '[%(asctime)s] %(message)s',
         },
         'verbose': {'format': '%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s'},
         'simple': {'format': '%(levelname)s %(message)s'},
@@ -292,6 +302,9 @@ THUMBNAIL_ALIASES = {
 
 # Django Rest Framework
 REST_FRAMEWORK = {
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.AllowAny",
+    ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend', 'rest_framework.filters.OrderingFilter'],
     'PAGE_SIZE': int(os.getenv('DJANGO_PAGINATION_LIMIT', 18)),
@@ -314,6 +327,8 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {'anon': '100/second', 'user': '1000/second', 'subscribe': '60/minute'},
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
+    'ALLOWED_VERSIONS': ['v1', 'v2'],
+    # 'EXCEPTION_HANDLER': 'src.common.exception_handler.custom_exception_handler',
 }
 
 # JWT configuration
@@ -357,3 +372,9 @@ SUMMERNOTE_CONFIG = {
 }
 
 DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
+
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'api_key': {'type': 'apiKey', 'in': 'header', 'name': 'Authorization'}
+    },
+}
