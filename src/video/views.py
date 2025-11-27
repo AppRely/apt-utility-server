@@ -4,6 +4,7 @@ import base64
 import cv2
 import math
 import numpy as np
+import random
 from django.http import FileResponse, HttpResponse, JsonResponse
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -31,6 +32,22 @@ def replace_nan_with_none(obj):
         return [replace_nan_with_none(x) for x in obj]
     else:
         return obj
+
+
+def _generate_dummy_coordinates(seed_key, num_points=5):
+    """
+    Generate deterministic pseudo-random coordinates for visual testing.
+    """
+    random.seed(seed_key)
+    coords = []
+    for _ in range(num_points):
+        coords.append(
+            {
+                "x": round(random.uniform(0, 1920), 2),
+                "y": round(random.uniform(0, 1080), 2),
+            }
+        )
+    return coords
 
 
 class VideoViewSet(viewsets.ModelViewSet):
@@ -268,6 +285,129 @@ class VideoViewSet(viewsets.ModelViewSet):
             return JsonResponse(result)
         except Exception as e:
             return JsonResponse({"error": f"Failed to get TRK data: {str(e)}"}, status=500)
+
+    @swagger_auto_schema(
+        operation_description="Return dummy object/coordinate data for a single frame. Used by pause + select flow.",
+        manual_parameters=[
+            openapi.Parameter(
+                'video',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Video ID',
+            ),
+            openapi.Parameter(
+                'frame',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Frame number',
+            ),
+        ],
+        responses={200: 'Dummy JSON payload for the requested frame'},
+    )
+    @action(detail=False, methods=['get'], url_path='frame')
+    def frame_object(self, request):
+        """
+        GET /api/v1/frame?video=ID&frame=NUM
+        """
+        try:
+            video_id = int(request.GET.get("video"))
+            frame_id = int(request.GET.get("frame"))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "video and frame query params are required integers"}, status=400)
+
+        frame_image = "dummy_base64_image_here"  # hardcoded for now
+        trk_objects = []
+        object_ids = random.sample(range(0, 1386), 10)
+        for object_id in object_ids:
+            trk_objects.append(
+                {
+                    "object_id": object_id,
+                    "coordinates": _generate_dummy_coordinates(
+                        f"{video_id}-{frame_id}-{object_id}", num_points=1
+                    ),
+                }
+            )
+
+        payload = {
+            "video_id": video_id,
+            "frame_id": frame_id,
+            "frame_image": frame_image,
+            "trk_data": trk_objects,
+        }
+        return JsonResponse(payload)
+
+    @swagger_auto_schema(
+        operation_description="Return dummy object/coordinate data for a consecutive frame range (max 150 frames).",
+        manual_parameters=[
+            openapi.Parameter(
+                'start',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Start frame id (inclusive)',
+            ),
+            openapi.Parameter(
+                'end',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='End frame id (inclusive, max span 150)',
+            ),
+        ],
+        responses={200: 'Dummy JSON payload for the requested frame range'},
+    )
+    @action(detail=True, methods=['get'], url_path='frame-object-range')
+    def frame_object_range(self, request, pk=None):
+        """
+        GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
+        """
+        try:
+            start_frame = int(request.query_params.get('start'))
+            end_frame = int(request.query_params.get('end'))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "start and end query params are required integers"}, status=400)
+
+        if start_frame > end_frame:
+            return JsonResponse({"error": "start must be <= end"}, status=400)
+
+        if end_frame - start_frame + 1 > 150:
+            return JsonResponse({"error": "range cannot exceed 150 frames"}, status=400)
+
+        video_id = int(pk) if pk is not None else 1
+
+        #object_ids = [random.randint(0, 20) for _ in range(random.randint(2, 5))]
+        object_ids = random.sample(range(0, 1386), 10)
+        objects = []
+
+        for obj_id in object_ids:
+            frames_list = []
+            for frame_id in range(start_frame, end_frame + 1):
+                coords = _generate_dummy_coordinates(
+                    f"{video_id}-{frame_id}-{obj_id}",
+                    num_points=1,
+                )[0]
+                frames_list.append(
+                    {
+                        "frame_id": frame_id,
+                        "coordinates": coords,
+                    }
+                )
+            objects.append(
+                {
+                    "object_id": obj_id,
+                    "frames": frames_list,
+                }
+            )
+
+        payload = {
+            "video_id": video_id,
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "objects": objects,
+        }
+        return JsonResponse(payload)
 
     @swagger_auto_schema(
         operation_description="Upload a new video file with TRK data",
