@@ -13,12 +13,13 @@ from rest_framework.permissions import AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from .models import Video
+from .models import Video, Project
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
     FrameObjectRangeSerializer,
-    FrameInfoSerializer
+    FrameInfoSerializer,
+    ProjectSerializer,
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -411,3 +412,18 @@ class VideoViewSet(viewsets.ModelViewSet):
             },
             status=201,
         )
+
+    @swagger_auto_schema(
+        operation_description="Get list of all in-progress projects with essential details",
+        responses={200: ProjectSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'], url_path='project-list')
+    def project_list(self, request):
+        """
+        GET /videos/project-list/
+        Returns only projects where project_status = 'inprogress'
+        Ordered by newest first.
+        """
+        projects = Project.objects.filter(project_status="inprogress").order_by('-created_at')
+        serializer = ProjectSerializer(projects, many=True)
+        return Response(serializer.data)

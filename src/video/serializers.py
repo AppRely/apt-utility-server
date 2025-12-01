@@ -52,6 +52,9 @@ class ProjectUploadSerializer(serializers.Serializer):
                 project_name=project_name,
                 video_name=video_file.name,
                 video_path=video_path,
+                trk_file_name=trk_file.name,
+                trk_file_path=trk_path,
+                project_status="inprogress",
                 status="Processing",
             )
 
@@ -405,3 +408,30 @@ class FrameInfoSerializer(serializers.Serializer):
             # "trk_timestamp": frame_data.trk_timestamp,
             "objects": objects,
         }
+
+
+class ProjectSerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing projects with essential fields.
+    """
+    #video_file = serializers.CharField(source='video_name', read_only=True)
+    class Meta:
+        model = Project
+        fields = [
+            "project_id",
+            "project_name",
+            "description",
+            "video_id",
+            "video_name",
+            "video_path", 
+            "trk_file_name",
+            "trk_file_path",
+            "height",
+            "width",
+            "fps",
+            "total_frames",
+            "project_status",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
