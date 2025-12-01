@@ -14,7 +14,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from .models import Video
-from .serializers import VideoSerializer
+from .serializers import ProjectUploadSerializer, VideoSerializer
 
 # Import Movie class from movies.py and Trk from TrkFile.py
 from .movies import Movie
@@ -276,7 +276,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 "project_name", openapi.IN_FORM, type=openapi.TYPE_STRING, required=True, description="Project name"
             ),
             openapi.Parameter("video_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Video file"),
-            openapi.Parameter("trk_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Track file"),
+            openapi.Parameter("tracking_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Track file"),
         ],
         responses={201: VideoSerializer, 400: "Bad Request"},
     )
@@ -311,3 +311,29 @@ class VideoViewSet(viewsets.ModelViewSet):
             "uploaded_at": video.uploaded_at,
         }
         return Response(response_data)
+
+    # POST /videos/project-upload/ → expects form-data with project_name, video_file, tracking_file
+    @swagger_auto_schema(
+        operation_description="Upload project video along with TRK tracking data and persist parsed detections.",
+        request_body=ProjectUploadSerializer,
+        responses={201: "Upload success", 400: "Validation error"},
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="project-upload",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def project_upload(self, request):
+        serializer = ProjectUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+        return JsonResponse(
+            {
+                "status": "success",
+                "project_id": result["project_id"],
+                "rows_inserted": result["rows_inserted"],
+                "message": "Files saved and TRK data inserted successfully",
+            },
+            status=201,
+        )
