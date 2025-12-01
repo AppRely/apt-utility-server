@@ -14,7 +14,12 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
 from .models import Video
-from .serializers import ProjectUploadSerializer, VideoSerializer
+from .serializers import (
+    ProjectUploadSerializer, 
+    VideoSerializer, 
+    FrameObjectRangeSerializer,
+    FrameInfoSerializer
+)
 
 # Import Movie class from movies.py and Trk from TrkFile.py
 from .movies import Movie
@@ -268,6 +273,75 @@ class VideoViewSet(viewsets.ModelViewSet):
             return JsonResponse(result)
         except Exception as e:
             return JsonResponse({"error": f"Failed to get TRK data: {str(e)}"}, status=500)
+
+    #return object/coordinate data for a start and end frame from DB.
+    @swagger_auto_schema(
+        operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
+        manual_parameters=[
+            openapi.Parameter(
+                'start',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Start frame id (inclusive)',
+            ),
+            openapi.Parameter(
+                'end',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='End frame id (inclusive, max span 150)',
+            ),
+        ],
+        responses={200: 'JSON payload for the requested frame range'},
+    )
+    @action(detail=True, methods=['get'], url_path='frame-object-range')
+    def frame_object_range(self, request, pk=None):
+        """
+        GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
+        """
+        data = request.query_params.copy()
+        data['video_id'] = pk
+        
+        serializer = FrameObjectRangeSerializer(data=data)
+        if serializer.is_valid():
+            payload = serializer.get_data()
+            return JsonResponse(payload)
+        return JsonResponse(serializer.errors, status=400)
+
+    #Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.
+    @swagger_auto_schema(
+        operation_description="Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.",
+        manual_parameters=[
+            openapi.Parameter(
+                'video',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Video ID (project_id)',
+            ),
+            openapi.Parameter(
+                'frame',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Frame number',
+            ),
+        ],
+        pagination_class=None,
+        responses={200: 'JSON with frame data and tracking information', 400: 'Validation error'},
+    )
+    @action(detail=False, methods=['get'], url_path='frame')
+    def get_frame_info(self, request):
+        """
+        GET /api/v1/frame?video=ID&frame=NUM → Get frame information from database.
+        """
+        serializer = FrameInfoSerializer(data=request.query_params)
+        if serializer.is_valid():
+            payload = serializer.get_data()
+            return JsonResponse(payload)
+        return JsonResponse(serializer.errors, status=400)
+
 
     @swagger_auto_schema(
         operation_description="Upload a new video file with TRK data",

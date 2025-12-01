@@ -55,6 +55,10 @@ class ProjectUploadSerializer(serializers.Serializer):
                 status="Processing",
             )
 
+            # IMPORTANT: store video_id in Project table
+            project.video_id = project.project_id
+            project.save(update_fields=["video_id"])
+
             # 3. Parse and Persist TRK Data
             rows_inserted = 0
             with transaction.atomic():
@@ -241,3 +245,163 @@ class ProjectUploadSerializer(serializers.Serializer):
         os.makedirs(track_folder, exist_ok=True)
 
         return video_folder, track_folder
+
+
+class FrameObjectRangeSerializer(serializers.Serializer):
+    """
+    Serializer to handle fetching object data for a range of frames.
+    """
+    start = serializers.IntegerField(required=True, help_text="Start frame id (inclusive)")
+    end = serializers.IntegerField(required=True, help_text="End frame id (inclusive, max span 150)")
+    video_id = serializers.IntegerField(required=True, help_text="Video ID (passed from view)")
+
+    def validate(self, attrs):
+        start = attrs.get('start')
+        end = attrs.get('end')
+        video_id = attrs.get('video_id')
+
+        # Validate that frame numbers are non-negative
+        if start < 0:
+            raise serializers.ValidationError({"start": "Start frame number must be non-negative"})
+        
+        if end < 0:
+            raise serializers.ValidationError({"end": "End frame number must be non-negative"})
+
+        # Validate start <= end
+        if start > end:
+            raise serializers.ValidationError({"start": "start must be <= end"})
+
+        # Validate range does not exceed 150 frames
+        if end - start + 1 > 150:
+            raise serializers.ValidationError({"end": "range cannot exceed 150 frames"})
+
+        # Check if video exists in Project table
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video_id": f"Video with ID {video_id} does not exist"})
+
+        # Check if start frame exists in VideoData table
+        if not VideoData.objects.filter(video_id=video_id, frame_no=start).exists():
+            raise serializers.ValidationError({"start": f"Start frame {start} not found for video {video_id}"})
+
+        # Check if end frame exists in VideoData table
+        if not VideoData.objects.filter(video_id=video_id, frame_no=end).exists():
+            raise serializers.ValidationError({"end": f"End frame {end} not found for video {video_id}"})
+            
+        return attrs
+
+    def get_data(self):
+        validated_data = self.validated_data
+        start_frame = validated_data['start']
+        end_frame = validated_data['end']
+        video_id = validated_data['video_id']
+
+        # Query DB
+        qs = VideoData.objects.filter(
+            video_id=video_id, 
+            frame_no__gte=start_frame, 
+            frame_no__lte=end_frame
+        ).order_by('frame_no')
+
+        # Aggregate by object
+        objects_map = {}
+
+        for row in qs:
+            f_id = row.frame_no
+            confs = row.confidence if row.confidence else []
+            tags = row.tag if row.tag else []
+            timestamps = row.timestamp if row.timestamp else []
+
+            for i in range(1, 11):
+                obj_id = getattr(row, f'object_{i}_id')
+                coords = getattr(row, f'object_{i}_coordinates')
+                
+                if obj_id is not None:
+                    idx = i - 1
+                    if obj_id not in objects_map:
+                        objects_map[obj_id] = {
+                            "object_id": obj_id,
+                            "frames": []
+                        }
+                    
+                    objects_map[obj_id]["frames"].append({
+                        "frame_id": f_id,
+                        "coordinates": coords,
+                        "confidence": confs[idx] if idx < len(confs) else None,
+                        "tag": tags[idx] if idx < len(tags) else None,
+                        "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+                    })
+
+        return {
+            "video_id": video_id,
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "objects": list(objects_map.values()),
+        }
+
+
+class FrameInfoSerializer(serializers.Serializer):
+    """
+    Serializer to handle fetching frame information by video ID and frame number.
+    Returns all tracking data for the specified frame.
+    """
+    video = serializers.IntegerField(required=True, help_text="Video ID")
+    frame = serializers.IntegerField(required=True, help_text="Frame number")
+
+    def validate(self, attrs):
+        video_id = attrs.get('video')
+        frame_num = attrs.get('frame')
+
+        # Validate that frame number is non-negative
+        if frame_num < 0:
+            raise serializers.ValidationError({"frame": "Frame number must be non-negative"})
+
+        # Check if video exists in Project table
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video": f"Video with ID {video_id} does not exist"})
+
+        # Check if frame exists in VideoData table
+        if not VideoData.objects.filter(video_id=video_id, frame_no=frame_num).exists():
+            raise serializers.ValidationError({"frame": f"Frame {frame_num} not found for video {video_id}"})
+
+        return attrs
+
+    def get_data(self):
+        """
+        Fetch frame data from the database and return structured response.
+        """
+        validated_data = self.validated_data
+        video_id = validated_data['video']
+        frame_num = validated_data['frame']
+
+        # Query the database for the specific frame (already validated to exist)
+        frame_data = VideoData.objects.get(video_id=video_id, frame_no=frame_num)
+
+        # Extract frame-level data
+        confs = frame_data.confidence if frame_data.confidence else []
+        tags = frame_data.tag if frame_data.tag else []
+        timestamps = frame_data.timestamp if frame_data.timestamp else []
+
+        # Build objects list
+        objects = []
+        for i in range(1, 11):  # 10 object slots
+            obj_id = getattr(frame_data, f'object_{i}_id')
+            coords = getattr(frame_data, f'object_{i}_coordinates')
+            
+            if obj_id is not None:
+                idx = i - 1
+                objects.append({
+                    "object_id": obj_id,
+                    "coordinates": coords,
+                    "confidence": confs[idx] if idx < len(confs) else None,
+                    "tag": tags[idx] if idx < len(tags) else None,
+                    "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+                })
+
+        # Return structured response
+        return {
+            "video_id": video_id,
+            "frame_number": frame_num,
+            # "frame_timestamp": frame_data.frame_timestamp,
+            # "trk_timestamp": frame_data.trk_timestamp,
+            "objects": objects,
+        }
