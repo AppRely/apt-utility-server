@@ -5,6 +5,8 @@ import cv2
 import math
 import numpy as np
 from django.http import FileResponse, HttpResponse, JsonResponse
+from django.db.models import Q
+from django.conf import settings
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -83,10 +85,31 @@ class VideoViewSet(viewsets.ModelViewSet):
     def stream(self, request, pk=None):
         """
         GET /videos/{id}/stream/ → Stream video file with HTTP Range support.
+        Falls back to Project model if Video doesn't exist.
         """
         try:
+            # Try to get from Video model first
             video = self.get_object()
             file_path = video.video_file.path
+        except Video.DoesNotExist:
+            # Fall back to Project model
+            try:
+                project = Project.objects.get(pk=pk)
+                video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
+                if project.video_name:
+                    file_path = os.path.join(video_folder, project.video_name)
+                else:
+                    return JsonResponse({"error": "Video filename missing in project"}, status=404)
+                
+                if not os.path.exists(file_path):
+                    return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
+            except Project.DoesNotExist:
+                return JsonResponse({"error": "Video or Project not found"}, status=404)
+        except Exception as e:
+            logger.error("Error streaming video: %s", str(e), exc_info=True)
+            raise
+        
+        try:
             range_header = request.headers.get('Range')
             if range_header:
                 return self._stream_video_with_range(file_path, range_header)
@@ -97,8 +120,8 @@ class VideoViewSet(viewsets.ModelViewSet):
             response['Cache-Control'] = 'public, max-age=3600'
             return response
         except Exception as e:
-            logger.error("Error streaming video: %s", str(e), exc_info=True)
-            raise
+            logger.error("Error streaming video file: %s", str(e), exc_info=True)
+            return JsonResponse({"error": str(e)}, status=500)
 
     @swagger_auto_schema(
         operation_description="Get a list of frame numbers and base64-encoded thumbnails for the video. Useful for carousel or preview UI.",
@@ -400,7 +423,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         parser_classes=[MultiPartParser, FormParser],
     )
     def project_upload(self, request):
-        serializer = ProjectUploadSerializer(data=request.data)
+        serializer = ProjectUploadSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         result = serializer.save()
         return JsonResponse(
@@ -424,6 +447,78 @@ class VideoViewSet(viewsets.ModelViewSet):
         Returns only projects where project_status = 'inprogress'
         Ordered by newest first.
         """
-        projects = Project.objects.filter(project_status="inprogress").order_by('-created_at')
+        projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
         serializer = ProjectSerializer(projects, many=True)
         return Response(serializer.data)
+
+    @swagger_auto_schema(
+        operation_description="Stream the project video file with HTTP Range support.",
+        responses={206: 'Partial Content', 200: 'Full Content', 404: 'Not Found'},
+    )
+    @action(detail=True, methods=['get'], url_path='project-stream')
+    def project_stream(self, request, pk=None):
+        """
+        GET /videos/{id}/project-stream/ → Stream video file from Project model.
+        """
+        try:
+            # Fetch Project manually since ViewSet queryset is Video
+            project = Project.objects.get(pk=pk)
+            
+            # Reconstruct disk path from filename
+            video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
+            if project.video_name:
+                file_path = os.path.join(video_folder, project.video_name)
+            else:
+                return JsonResponse({"error": "Video filename missing in project"}, status=404)
+            
+            if not file_path or not os.path.exists(file_path):
+                 return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
+
+            range_header = request.headers.get('Range')
+            if range_header:
+                return self._stream_video_with_range(file_path, range_header)
+            
+            # Full file
+            response = FileResponse(open(file_path, 'rb'), content_type='video/mp4')
+            response['Content-Length'] = str(os.path.getsize(file_path))
+            response['Accept-Ranges'] = 'bytes'
+            response['Cache-Control'] = 'public, max-age=3600'
+            return response
+        except Project.DoesNotExist:
+             return JsonResponse({"error": "Project not found"}, status=404)
+        except Exception as e:
+            logger.error("Error streaming video: %s", str(e), exc_info=True)
+            return JsonResponse({"error": str(e)}, status=500)
+
+    @swagger_auto_schema(
+        operation_description="Stream/download the raw TRK file content for the project.",
+        responses={200: 'TRK file', 404: 'TRK file not found'},
+    )
+    @action(detail=True, methods=['get'], url_path='project-stream-trk')
+    def project_stream_trk(self, request, pk=None):
+        """
+        GET /videos/{id}/project-stream-trk/ → Stream/download the TRK file content from Project model.
+        """
+        logger.info(f"Streaming TRK for project {pk}")
+        try:
+            project = Project.objects.get(pk=pk)
+            # Reconstruct disk path from filename
+            track_folder = os.path.join(settings.MEDIA_ROOT, "track_folder")
+            if project.trk_file_name:
+                trk_path = os.path.join(track_folder, project.trk_file_name)
+            else:
+                return JsonResponse({"error": "TRK filename missing in project"}, status=404)
+        
+            if not trk_path or not os.path.exists(trk_path):
+                return JsonResponse({"error": "TRK file not found"}, status=404)
+                
+            response = FileResponse(
+                open(trk_path, 'rb'),
+                as_attachment=True,
+                filename=os.path.basename(trk_path),
+                content_type="application/octet-stream",
+            )
+            response['Cache-Control'] = 'public, max-age=3600'
+            return response
+        except Project.DoesNotExist:
+             return JsonResponse({"error": "Project not found"}, status=404)

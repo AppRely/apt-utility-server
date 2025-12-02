@@ -37,37 +37,37 @@ class ProjectUploadSerializer(serializers.Serializer):
 
         # Setup paths
         video_folder, track_folder = self._get_media_paths()
-        video_path = os.path.join(video_folder, os.path.basename(video_file.name))
-        trk_path = os.path.join(track_folder, os.path.basename(trk_file.name))
+        video_disk_path = os.path.join(video_folder, os.path.basename(video_file.name))
+        trk_disk_path = os.path.join(track_folder, os.path.basename(trk_file.name))
 
         project = None
 
         try:
-            # 1. Save files to disk
-            self._write_file(video_file, video_path)
-            self._write_file(trk_file, trk_path)
+            # 1. Save raw files to disk
+            self._write_file(video_file, video_disk_path)
+            self._write_file(trk_file, trk_disk_path)
 
-            # 2. Create Project record
+            # 2. Create Project row with disk paths
             project = Project.objects.create(
                 project_name=project_name,
                 video_name=video_file.name,
-                video_path=video_path,
+                video_path=video_disk_path,        # disk path
                 trk_file_name=trk_file.name,
-                trk_file_path=trk_path,
+                trk_file_path=trk_disk_path,       # disk path
                 project_status="inprogress",
                 status="Processing",
             )
 
-            # IMPORTANT: store video_id in Project table
+            # video_id = project_id
             project.video_id = project.project_id
             project.save(update_fields=["video_id"])
 
-            # 3. Parse and Persist TRK Data
+            # 3. Parse TRK and insert rows
             rows_inserted = 0
             with transaction.atomic():
-                trk = Trk(trk_path)
+                trk = Trk(trk_disk_path)
                 rows_inserted = self._persist_trk_data(project.project_id, trk)
-                
+
                 if rows_inserted == 0:
                     raise ValueError("Upload failed — no TRK data extracted.")
 
@@ -75,13 +75,38 @@ class ProjectUploadSerializer(serializers.Serializer):
             project.status = "Completed"
             project.save(update_fields=["status"])
 
+            # ------------------------------------------------------------
+            # 🔥 CORRECT STREAM URL GENERATION FOR PROJECT MODEL
+            # ------------------------------------------------------------
+            request = self.context.get("request")
+
+            if request:
+                video_stream_url = request.build_absolute_uri(
+                    f"/api/v1/videos/{project.project_id}/project-stream/"
+                )
+                trk_stream_url = request.build_absolute_uri(
+                    f"/api/v1/videos/{project.project_id}/project-stream-trk/"
+                )
+            else:
+                video_stream_url = None
+                trk_stream_url = None
+
+            # Save STREAM URLs into DB instead of disk path
+            project.video_path = video_stream_url
+            project.trk_file_path = trk_stream_url
+            project.save(update_fields=["video_path", "trk_file_path"])
+            # ------------------------------------------------------------
+
+            # Return final JSON
             return {
                 "project_id": project.project_id,
                 "rows_inserted": rows_inserted,
+                "video_stream_url": video_stream_url,
+                "trk_stream_url": trk_stream_url,
             }
 
         except Exception as exc:
-            self._cleanup_failed_upload(project, video_path, trk_path)
+            self._cleanup_failed_upload(project, video_disk_path, trk_disk_path)
             raise serializers.ValidationError({"detail": f"Upload failed: {str(exc)}"})
 
     def _persist_trk_data(self, project_id: int, trk: Trk) -> int:
@@ -237,9 +262,8 @@ class ProjectUploadSerializer(serializers.Serializer):
                 dest.write(chunk)
 
     @staticmethod
-    def _get_media_paths() -> tuple[str, str]:
-        video_app_path = os.path.join(settings.BASE_DIR, "src", "video")
-        media_root = os.path.join(video_app_path, "media")
+    def _get_media_paths():
+        media_root = settings.MEDIA_ROOT
         
         video_folder = os.path.join(media_root, "video_folder")
         track_folder = os.path.join(media_root, "track_folder")
@@ -420,18 +444,12 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = [
             "project_id",
             "project_name",
-            "description",
             "video_id",
             "video_name",
             "video_path", 
             "trk_file_name",
             "trk_file_path",
-            "height",
-            "width",
-            "fps",
-            "total_frames",
             "project_status",
-            "status",
             "created_at",
             "updated_at",
         ]
