@@ -47,36 +47,37 @@ class ProjectUploadSerializer(serializers.Serializer):
             self._write_file(video_file, video_disk_path)
             self._write_file(trk_file, trk_disk_path)
 
-            # 2. Create Project row with disk paths
-            project = Project.objects.create(
-                project_name=project_name,
-                video_name=video_file.name,
-                video_path=video_disk_path,        # disk path
-                trk_file_name=trk_file.name,
-                trk_file_path=trk_disk_path,       # disk path
-                project_status="inprogress",
-                status="Processing",
-            )
+            # 2. Parse TRK first BEFORE creating project
+            trk = Trk(trk_disk_path)
 
-            # video_id = project_id
-            project.video_id = project.project_id
-            project.save(update_fields=["video_id"])
+            # Validate TRK has usable data
+            if trk.getframe(trk.T0) is None:
+                raise ValueError("Upload failed — no TRK data extracted.")
 
-            # 3. Parse TRK and insert rows
-            rows_inserted = 0
+            # 3. Create project ONLY after TRK passes validation
             with transaction.atomic():
-                trk = Trk(trk_disk_path)
+                project = Project.objects.create(
+                    project_name=project_name,
+                    video_name=video_file.name,
+                    video_path=video_disk_path,
+                    trk_file_name=trk_file.name,
+                    trk_file_path=trk_disk_path,
+                    project_status="inprogress",
+                    status="Completed",   # Directly completed
+                )
+
+                # video_id = project_id
+                project.video_id = project.project_id
+                project.save(update_fields=["video_id"])
+
+                # 4. Insert TRK Data
                 rows_inserted = self._persist_trk_data(project.project_id, trk)
 
                 if rows_inserted == 0:
-                    raise ValueError("Upload failed — no TRK data extracted.")
-
-            # 4. Update status
-            project.status = "Completed"
-            project.save(update_fields=["status"])
+                    raise ValueError("Upload failed — no TRK frames inserted")
 
             # ------------------------------------------------------------
-            # 🔥 CORRECT STREAM URL GENERATION FOR PROJECT MODEL
+            #  CORRECT STREAM URL GENERATION FOR PROJECT MODEL
             # ------------------------------------------------------------
             request = self.context.get("request")
 
