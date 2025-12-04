@@ -299,9 +299,9 @@ class FrameObjectRangeSerializer(serializers.Serializer):
         if start > end:
             raise serializers.ValidationError({"start": "start must be <= end"})
 
-        # Validate range does not exceed 150 frames
-        if end - start + 1 > 150:
-            raise serializers.ValidationError({"end": "range cannot exceed 150 frames"})
+        # Validate range does not exceed 900 frames
+        if end - start + 1 > 900:
+            raise serializers.ValidationError({"end": "range cannot exceed 900 frames"})
 
         # Check if video exists in Project table
         if not Project.objects.filter(project_id=video_id).exists():
