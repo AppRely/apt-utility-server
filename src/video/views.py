@@ -6,6 +6,8 @@ import math
 import numpy as np
 import random
 from django.http import FileResponse, HttpResponse, JsonResponse
+from django.db.models import Q
+from django.conf import settings
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -14,8 +16,14 @@ from rest_framework.permissions import AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from .models import Video
-from .serializers import VideoSerializer
+from .models import Video, Project, VideoData
+from .serializers import (
+    ProjectUploadSerializer, 
+    VideoSerializer, 
+    FrameObjectRangeSerializer,
+    FrameInfoSerializer,
+    ProjectSerializer,
+)
 
 # Import Movie class from movies.py and Trk from TrkFile.py
 from .movies import Movie
@@ -94,10 +102,31 @@ class VideoViewSet(viewsets.ModelViewSet):
     def stream(self, request, pk=None):
         """
         GET /videos/{id}/stream/ → Stream video file with HTTP Range support.
+        Falls back to Project model if Video doesn't exist.
         """
         try:
+            # Try to get from Video model first
             video = self.get_object()
             file_path = video.video_file.path
+        except Video.DoesNotExist:
+            # Fall back to Project model
+            try:
+                project = Project.objects.get(pk=pk)
+                video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
+                if project.video_name:
+                    file_path = os.path.join(video_folder, project.video_name)
+                else:
+                    return JsonResponse({"error": "Video filename missing in project"}, status=404)
+                
+                if not os.path.exists(file_path):
+                    return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
+            except Project.DoesNotExist:
+                return JsonResponse({"error": "Video or Project not found"}, status=404)
+        except Exception as e:
+            logger.error("Error streaming video: %s", str(e), exc_info=True)
+            raise
+        
+        try:
             range_header = request.headers.get('Range')
             if range_header:
                 return self._stream_video_with_range(file_path, range_header)
@@ -108,8 +137,8 @@ class VideoViewSet(viewsets.ModelViewSet):
             response['Cache-Control'] = 'public, max-age=3600'
             return response
         except Exception as e:
-            logger.error("Error streaming video: %s", str(e), exc_info=True)
-            raise
+            logger.error("Error streaming video file: %s", str(e), exc_info=True)
+            return JsonResponse({"error": str(e)}, status=500)
 
     @swagger_auto_schema(
         operation_description="Get a list of frame numbers and base64-encoded thumbnails for the video. Useful for carousel or preview UI.",
@@ -286,6 +315,139 @@ class VideoViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return JsonResponse({"error": f"Failed to get TRK data: {str(e)}"}, status=500)
 
+    #return object/coordinate data for a start and end frame from DB.
+    @swagger_auto_schema(
+        operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
+        manual_parameters=[
+            openapi.Parameter(
+                'start',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Start frame id (inclusive)',
+            ),
+            openapi.Parameter(
+                'end',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='End frame id (inclusive, max span 150)',
+            ),
+        ],
+        responses={200: 'JSON payload for the requested frame range'},
+    )
+    @action(detail=True, methods=['get'], url_path='frame-object-range')
+    def frame_object_range(self, request, pk=None):
+        """
+        GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
+        """
+        data = request.query_params.copy()
+        data['video_id'] = pk
+        
+        serializer = FrameObjectRangeSerializer(data=data)
+        if serializer.is_valid():
+            data = serializer.validated_data
+            video_id = data['video_id']
+            start = data['start']
+            end = data['end']
+
+            # Check if end frame is out of range
+            max_row = VideoData.objects.filter(video_id=video_id).order_by('-frame_no').first()
+            if max_row and end > max_row.frame_no:
+                return JsonResponse(
+                    {
+                        "error": f"Requested end frame {end} is out of range. "
+                                f"Last available frame is {max_row.frame_no}."
+                    },
+                    status=400
+                )
+
+            # Identify missing frames in this window
+            existing = set(
+                VideoData.objects.filter(
+                    video_id=video_id,
+                    frame_no__gte=start,
+                    frame_no__lte=end,
+                ).values_list("frame_no", flat=True)
+            )
+
+            full_range = range(start, end + 1)
+            missing_frames = [f for f in full_range if f not in existing]
+
+            # Fallback for each missing frame → previous valid
+            fallback_frames = []
+            for f in missing_frames:
+                prev = self._get_previous_valid_frame(video_id, f)
+                if prev:
+                    fallback_frames.append(prev)
+
+            # Merge fallback
+            if fallback_frames:
+                # We don't alter serializer, only override queryset
+                serializer.extra_frames = fallback_frames
+
+            payload = serializer.get_data()
+            return JsonResponse(payload)
+        return JsonResponse(serializer.errors, status=400)
+
+    #Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.
+    @swagger_auto_schema(
+        operation_description="Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.",
+        manual_parameters=[
+            openapi.Parameter(
+                'video',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Video ID (project_id)',
+            ),
+            openapi.Parameter(
+                'frame',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Frame number',
+            ),
+        ],
+        pagination_class=None,
+        responses={200: 'JSON with frame data and tracking information', 400: 'Validation error'},
+    )
+    @action(detail=False, methods=['get'], url_path='frame')
+    def get_frame_info(self, request):
+        """
+        GET /api/v1/frame?video=ID&frame=NUM → Get frame information from database.
+        """
+        serializer = FrameInfoSerializer(data=request.query_params)
+        if serializer.is_valid():
+            video_id = serializer.validated_data['video']
+            frame_no = serializer.validated_data['frame']
+
+            # Check if frame is out of range
+            max_row = VideoData.objects.filter(video_id=video_id).order_by('-frame_no').first()
+            if max_row and frame_no > max_row.frame_no:
+                return JsonResponse(
+                    {
+                        "error": f"Requested frame {frame_no} is out of range. "
+                                f"Last available frame is {max_row.frame_no}."
+                    },
+                    status=400
+                )
+
+            # MISSING FRAME FALLBACK
+            if not self._has_frame_data(video_id, frame_no):
+                fallback = self._get_previous_valid_frame(video_id, frame_no)
+                if fallback is None:
+                    return JsonResponse(
+                        {"error": "No valid previous frame found"},
+                        status=404
+                    )
+                serializer.validated_data['frame'] = fallback
+
+            payload = serializer.get_data()
+            return JsonResponse(payload)
+        return JsonResponse(serializer.errors, status=400)
+
+
     @swagger_auto_schema(
         operation_description="Return dummy object/coordinate data for a single frame. Used by pause + select flow.",
         manual_parameters=[
@@ -416,7 +578,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 "project_name", openapi.IN_FORM, type=openapi.TYPE_STRING, required=True, description="Project name"
             ),
             openapi.Parameter("video_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Video file"),
-            openapi.Parameter("trk_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Track file"),
+            openapi.Parameter("tracking_file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Track file"),
         ],
         responses={201: VideoSerializer, 400: "Bad Request"},
     )
@@ -451,3 +613,136 @@ class VideoViewSet(viewsets.ModelViewSet):
             "uploaded_at": video.uploaded_at,
         }
         return Response(response_data)
+
+    # POST /videos/project-upload/ → expects form-data with project_name, video_file, tracking_file
+    @swagger_auto_schema(
+        operation_description="Upload project video along with TRK tracking data and persist parsed detections.",
+        request_body=ProjectUploadSerializer,
+        responses={201: "Upload success", 400: "Validation error"},
+    )
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="project-upload",
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def project_upload(self, request):
+        serializer = ProjectUploadSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+        return JsonResponse(
+            {
+                "status": "success",
+                "project_id": result["project_id"],
+                "rows_inserted": result["rows_inserted"],
+                "message": "Files saved and TRK data inserted successfully",
+            },
+            status=201,
+        )
+
+    @swagger_auto_schema(
+        operation_description="Get list of all in-progress projects with essential details",
+        responses={200: ProjectSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'], url_path='project-list')
+    def project_list(self, request):
+        """
+        GET /videos/project-list/
+        Returns only projects where project_status = 'inprogress'
+        Ordered by newest first.
+        """
+        projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
+        serializer = ProjectSerializer(projects, many=True)
+        return Response(serializer.data)
+
+    @swagger_auto_schema(
+        operation_description="Stream the project video file with HTTP Range support.",
+        responses={206: 'Partial Content', 200: 'Full Content', 404: 'Not Found'},
+    )
+    @action(detail=True, methods=['get'], url_path='project-stream')
+    def project_stream(self, request, pk=None):
+        """
+        GET /videos/{id}/project-stream/ → Stream video file from Project model.
+        """
+        try:
+            # Fetch Project manually since ViewSet queryset is Video
+            project = Project.objects.get(pk=pk)
+            
+            # Reconstruct disk path from filename
+            video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
+            if project.video_name:
+                file_path = os.path.join(video_folder, project.video_name)
+            else:
+                return JsonResponse({"error": "Video filename missing in project"}, status=404)
+            
+            if not file_path or not os.path.exists(file_path):
+                 return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
+
+            range_header = request.headers.get('Range')
+            if range_header:
+                return self._stream_video_with_range(file_path, range_header)
+            
+            # Full file
+            response = FileResponse(open(file_path, 'rb'), content_type='video/mp4')
+            response['Content-Length'] = str(os.path.getsize(file_path))
+            response['Accept-Ranges'] = 'bytes'
+            response['Cache-Control'] = 'public, max-age=3600'
+            return response
+        except Project.DoesNotExist:
+             return JsonResponse({"error": "Project not found"}, status=404)
+        except Exception as e:
+            logger.error("Error streaming video: %s", str(e), exc_info=True)
+            return JsonResponse({"error": str(e)}, status=500)
+
+    @swagger_auto_schema(
+        operation_description="Stream/download the raw TRK file content for the project.",
+        responses={200: 'TRK file', 404: 'TRK file not found'},
+    )
+    @action(detail=True, methods=['get'], url_path='project-stream-trk')
+    def project_stream_trk(self, request, pk=None):
+        """
+        GET /videos/{id}/project-stream-trk/ → Stream/download the TRK file content from Project model.
+        """
+        logger.info(f"Streaming TRK for project {pk}")
+        try:
+            project = Project.objects.get(pk=pk)
+            # Reconstruct disk path from filename
+            track_folder = os.path.join(settings.MEDIA_ROOT, "track_folder")
+            if project.trk_file_name:
+                trk_path = os.path.join(track_folder, project.trk_file_name)
+            else:
+                return JsonResponse({"error": "TRK filename missing in project"}, status=404)
+        
+            if not trk_path or not os.path.exists(trk_path):
+                return JsonResponse({"error": "TRK file not found"}, status=404)
+                
+            response = FileResponse(
+                open(trk_path, 'rb'),
+                as_attachment=True,
+                filename=os.path.basename(trk_path),
+                content_type="application/octet-stream",
+            )
+            response['Cache-Control'] = 'public, max-age=3600'
+            return response
+        except Project.DoesNotExist:
+             return JsonResponse({"error": "Project not found"}, status=404)
+
+    # MISSING-FRAME HELPERS
+    def _has_frame_data(self, video_id, frame_no):
+        """Check if frame exists in VideoData."""
+        return VideoData.objects.filter(
+            video_id=video_id,
+            frame_no=frame_no
+        ).exists()
+
+    def _get_previous_valid_frame(self, video_id, frame_no):
+        """Return nearest previous valid frame, else None."""
+        row = (
+            VideoData.objects
+            .filter(video_id=video_id, frame_no__lt=frame_no)
+            .order_by('-frame_no')
+            .first()
+        )
+        return row.frame_no if row else None
+
+    
