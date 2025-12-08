@@ -330,6 +330,14 @@ class FrameObjectRangeSerializer(serializers.Serializer):
             frame_no__lte=end_frame
         ).order_by('frame_no')
 
+        # Include fallback frames from view if present
+        if hasattr(self, "extra_frames"):
+            qs = qs | VideoData.objects.filter(
+                video_id=video_id,
+                frame_no__in=self.extra_frames
+            )
+            qs = qs.order_by("frame_no")
+
         # Aggregate by object
         objects_map = {}
 
@@ -388,8 +396,8 @@ class FrameInfoSerializer(serializers.Serializer):
             raise serializers.ValidationError({"video": f"Video with ID {video_id} does not exist"})
 
         # Check if frame exists in VideoData table
-        if not VideoData.objects.filter(video_id=video_id, frame_no=frame_num).exists():
-            raise serializers.ValidationError({"frame": f"Frame {frame_num} not found for video {video_id}"})
+        # if not VideoData.objects.filter(video_id=video_id, frame_no=frame_num).exists():
+        #     raise serializers.ValidationError({"frame": f"Frame {frame_num} not found for video {video_id}"})
 
         return attrs
 

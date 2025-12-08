@@ -15,7 +15,7 @@ from rest_framework.permissions import AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-from .models import Video, Project
+from .models import Video, Project, VideoData
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
@@ -329,6 +329,46 @@ class VideoViewSet(viewsets.ModelViewSet):
         
         serializer = FrameObjectRangeSerializer(data=data)
         if serializer.is_valid():
+            data = serializer.validated_data
+            video_id = data['video_id']
+            start = data['start']
+            end = data['end']
+
+            # Check if end frame is out of range
+            max_row = VideoData.objects.filter(video_id=video_id).order_by('-frame_no').first()
+            if max_row and end > max_row.frame_no:
+                return JsonResponse(
+                    {
+                        "error": f"Requested end frame {end} is out of range. "
+                                f"Last available frame is {max_row.frame_no}."
+                    },
+                    status=400
+                )
+
+            # Identify missing frames in this window
+            existing = set(
+                VideoData.objects.filter(
+                    video_id=video_id,
+                    frame_no__gte=start,
+                    frame_no__lte=end,
+                ).values_list("frame_no", flat=True)
+            )
+
+            full_range = range(start, end + 1)
+            missing_frames = [f for f in full_range if f not in existing]
+
+            # Fallback for each missing frame → previous valid
+            fallback_frames = []
+            for f in missing_frames:
+                prev = self._get_previous_valid_frame(video_id, f)
+                if prev:
+                    fallback_frames.append(prev)
+
+            # Merge fallback
+            if fallback_frames:
+                # We don't alter serializer, only override queryset
+                serializer.extra_frames = fallback_frames
+
             payload = serializer.get_data()
             return JsonResponse(payload)
         return JsonResponse(serializer.errors, status=400)
@@ -362,6 +402,30 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         serializer = FrameInfoSerializer(data=request.query_params)
         if serializer.is_valid():
+            video_id = serializer.validated_data['video']
+            frame_no = serializer.validated_data['frame']
+
+            # Check if frame is out of range
+            max_row = VideoData.objects.filter(video_id=video_id).order_by('-frame_no').first()
+            if max_row and frame_no > max_row.frame_no:
+                return JsonResponse(
+                    {
+                        "error": f"Requested frame {frame_no} is out of range. "
+                                f"Last available frame is {max_row.frame_no}."
+                    },
+                    status=400
+                )
+
+            # MISSING FRAME FALLBACK
+            if not self._has_frame_data(video_id, frame_no):
+                fallback = self._get_previous_valid_frame(video_id, frame_no)
+                if fallback is None:
+                    return JsonResponse(
+                        {"error": "No valid previous frame found"},
+                        status=404
+                    )
+                serializer.validated_data['frame'] = fallback
+
             payload = serializer.get_data()
             return JsonResponse(payload)
         return JsonResponse(serializer.errors, status=400)
@@ -522,3 +586,23 @@ class VideoViewSet(viewsets.ModelViewSet):
             return response
         except Project.DoesNotExist:
              return JsonResponse({"error": "Project not found"}, status=404)
+
+    # MISSING-FRAME HELPERS
+    def _has_frame_data(self, video_id, frame_no):
+        """Check if frame exists in VideoData."""
+        return VideoData.objects.filter(
+            video_id=video_id,
+            frame_no=frame_no
+        ).exists()
+
+    def _get_previous_valid_frame(self, video_id, frame_no):
+        """Return nearest previous valid frame, else None."""
+        row = (
+            VideoData.objects
+            .filter(video_id=video_id, frame_no__lt=frame_no)
+            .order_by('-frame_no')
+            .first()
+        )
+        return row.frame_no if row else None
+
+    
