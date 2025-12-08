@@ -117,7 +117,14 @@ class ProjectUploadSerializer(serializers.Serializer):
         bulk_data: list[VideoData] = []
         total_rows: int = 0
 
-        # Safely get start/end frames
+        # =============================================================
+        # LOAD START/END FRAMES + TRUE OBJECT IDS
+        # =============================================================
+        trk_start_frames = np.array(trk.startframes).flatten()   # e.g. 1386 items
+        trk_end_frames = np.array(trk.endframes).flatten()
+        trk_object_ids = np.array(trk.pTrkiTgt).flatten()        # maps index → object ID
+
+        # Safely get global frame range
         start = int(getattr(trk, "T0", 0))
         end = int(getattr(trk, "T1", start))
 
@@ -175,14 +182,30 @@ class ProjectUploadSerializer(serializers.Serializer):
             slots = {}
             slot_num = 1
             for obj_id in objects_present[:self.MAX_OBJECT_SLOTS]:
-                slots[f"object_{slot_num}_id"] = obj_id
-                slots[f"object_{slot_num}_coordinates"] = objects_data[obj_id]["coordinates"]
+
+                coords = objects_data[obj_id]["coordinates"]
+
+                # TRUE OBJECT ID from TRK (this is CRITICAL)
+                true_id = int(trk_object_ids[obj_id])
+
+                # Get object's start/end frame
+                start_f = int(trk_start_frames[true_id])
+                end_f = int(trk_end_frames[true_id])
+
+                # Assign slot values
+                slots[f"object_{slot_num}_id"] = true_id
+                slots[f"object_{slot_num}_coordinates"] = coords
+                slots[f"object_{slot_num}_start_frame"] = start_f
+                slots[f"object_{slot_num}_end_frame"] = end_f
+
                 slot_num += 1
 
             # Fill remaining slots with None
             for s in range(slot_num, self.MAX_OBJECT_SLOTS + 1):
                 slots[f"object_{s}_id"] = None
                 slots[f"object_{s}_coordinates"] = None
+                slots[f"object_{s}_start_frame"] = None
+                slots[f"object_{s}_end_frame"] = None
 
             # ---- Add to Bulk List ----
             bulk_data.append(
@@ -350,7 +373,9 @@ class FrameObjectRangeSerializer(serializers.Serializer):
             for i in range(1, 11):
                 obj_id = getattr(row, f'object_{i}_id')
                 coords = getattr(row, f'object_{i}_coordinates')
-                
+                start_frame = getattr(row, f'object_{i}_start_frame')
+                end_frame = getattr(row, f'object_{i}_end_frame')
+                        
                 if obj_id is not None:
                     idx = i - 1
                     if obj_id not in objects_map:
@@ -365,6 +390,8 @@ class FrameObjectRangeSerializer(serializers.Serializer):
                         "confidence": confs[idx] if idx < len(confs) else None,
                         "tag": tags[idx] if idx < len(tags) else None,
                         "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+                        "start_frame": start_frame,
+                        "end_frame": end_frame,
                     })
 
         return {
@@ -422,6 +449,9 @@ class FrameInfoSerializer(serializers.Serializer):
         for i in range(1, 11):  # 10 object slots
             obj_id = getattr(frame_data, f'object_{i}_id')
             coords = getattr(frame_data, f'object_{i}_coordinates')
+            start_frame = getattr(frame_data, f'object_{i}_start_frame')
+            end_frame = getattr(frame_data, f'object_{i}_end_frame')
+            
             
             if obj_id is not None:
                 idx = i - 1
@@ -431,7 +461,9 @@ class FrameInfoSerializer(serializers.Serializer):
                     "confidence": confs[idx] if idx < len(confs) else None,
                     "tag": tags[idx] if idx < len(tags) else None,
                     "timestamp": timestamps[idx] if idx < len(timestamps) else None,
-                })
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    })
 
         # Return structured response
         return {

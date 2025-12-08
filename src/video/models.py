@@ -73,6 +73,36 @@ class VideoData(models.Model):
     object_10_id = models.IntegerField(null=True, blank=True)
     object_10_coordinates = models.JSONField(null=True, blank=True)
 
+    object_1_start_frame = models.IntegerField(null=True, blank=True)
+    object_1_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_2_start_frame = models.IntegerField(null=True, blank=True)
+    object_2_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_3_start_frame = models.IntegerField(null=True, blank=True)
+    object_3_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_4_start_frame = models.IntegerField(null=True, blank=True)
+    object_4_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_5_start_frame = models.IntegerField(null=True, blank=True)
+    object_5_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_6_start_frame = models.IntegerField(null=True, blank=True)
+    object_6_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_7_start_frame = models.IntegerField(null=True, blank=True)
+    object_7_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_8_start_frame = models.IntegerField(null=True, blank=True)
+    object_8_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_9_start_frame = models.IntegerField(null=True, blank=True)
+    object_9_end_frame = models.IntegerField(null=True, blank=True)
+
+    object_10_start_frame = models.IntegerField(null=True, blank=True)
+    object_10_end_frame = models.IntegerField(null=True, blank=True)
+
     trk_timestamp = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -320,6 +320,18 @@ class VideoViewSet(viewsets.ModelViewSet):
         responses={200: 'JSON payload for the requested frame range'},
     )
     @action(detail=True, methods=['get'], url_path='frame-object-range')
+    # def frame_object_range(self, request, pk=None):
+    #     """
+    #     GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
+    #     """
+    #     data = request.query_params.copy()
+    #     data['video_id'] = pk
+        
+    #     serializer = FrameObjectRangeSerializer(data=data)
+    #     if serializer.is_valid():
+    #         payload = serializer.get_data()
+    #         return JsonResponse(payload)
+    #     return JsonResponse(serializer.errors, status=400)
     def frame_object_range(self, request, pk=None):
         """
         GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
@@ -370,6 +382,17 @@ class VideoViewSet(viewsets.ModelViewSet):
                 serializer.extra_frames = fallback_frames
 
             payload = serializer.get_data()
+            
+            # Remove unwanted fields from response (in-place mutation)
+            if 'objects' in payload:
+                for obj in payload['objects']:
+                    if 'frames' in obj:
+                        for frame in obj['frames']:
+                            # Delete the fields you don't want
+                            frame.pop('confidence', None)
+                            frame.pop('tag', None) 
+                            # frame.pop('timestamp', None)
+            
             return JsonResponse(payload)
         return JsonResponse(serializer.errors, status=400)
 
@@ -476,33 +499,57 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     # POST /videos/project-upload/ → expects form-data with project_name, video_file, tracking_file
     @swagger_auto_schema(
-        operation_description="Upload project video along with TRK tracking data and persist parsed detections.",
+        operation_description="Upload project video + TRK data",
         request_body=ProjectUploadSerializer,
-        responses={201: "Upload success", 400: "Validation error"},
+        responses={201: "Success", 400: "Validation error", 500: "Server error"},
     )
-    @action(
-        detail=False,
-        methods=["post"],
-        url_path="project-upload",
-        parser_classes=[MultiPartParser, FormParser],
-    )
+    @action(detail=False, methods=["post"], url_path="project-upload", 
+            parser_classes=[MultiPartParser, FormParser])
     def project_upload(self, request):
-        serializer = ProjectUploadSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        result = serializer.save()
-        return JsonResponse(
-            {
+        try:
+            if "video_file" not in request.FILES:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "Missing video_file"
+                }, status=400)
+                
+            serializer = ProjectUploadSerializer(data=request.data, context={"request": request})
+            
+            if not serializer.is_valid():
+                return JsonResponse({
+                    "status": "error", 
+                    "errors": serializer.errors
+                }, status=400)
+            
+            result = serializer.save()
+            project_id = result.get("project_id")
+            rows_inserted = result.get("rows_inserted", 0)
+            
+            return JsonResponse({
                 "status": "success",
-                "project_id": result["project_id"],
-                "rows_inserted": result["rows_inserted"],
+                "project_id": project_id,
+                "rows_inserted": rows_inserted,
                 "message": "Files saved and TRK data inserted successfully",
-            },
-            status=201,
-        )
+            }, status=201)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return JsonResponse({
+                "status": "error",
+                "message": f"Server error: {str(e)}"
+            }, status=500)
+    
 
+
+    #GET project list 
     @swagger_auto_schema(
-        operation_description="Get list of all in-progress projects with essential details",
-        responses={200: ProjectSerializer(many=True)},
+    operation_description="Get list of all in-progress projects with essential details",
+    responses={
+        200: ProjectSerializer(many=True),
+        400: "Invalid parameters",
+        500: "Server error"
+    },
     )
     @action(detail=False, methods=['get'], url_path='project-list')
     def project_list(self, request):
@@ -511,9 +558,24 @@ class VideoViewSet(viewsets.ModelViewSet):
         Returns only projects where project_status = 'inprogress'
         Ordered by newest first.
         """
-        projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
-        serializer = ProjectSerializer(projects, many=True)
-        return Response(serializer.data)
+        try:
+
+            projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
+
+            serializer = ProjectSerializer(projects, many=True)
+            return Response(serializer.data, status=200)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Failed to fetch projects",
+                    "error": str(e)
+                },
+                status=500
+            )
 
     @swagger_auto_schema(
         operation_description="Stream the project video file with HTTP Range support.",
@@ -536,7 +598,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 return JsonResponse({"error": "Video filename missing in project"}, status=404)
             
             if not file_path or not os.path.exists(file_path):
-                 return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
+                return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
 
             range_header = request.headers.get('Range')
             if range_header:
@@ -549,7 +611,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             response['Cache-Control'] = 'public, max-age=3600'
             return response
         except Project.DoesNotExist:
-             return JsonResponse({"error": "Project not found"}, status=404)
+            return JsonResponse({"error": "Project not found"}, status=404)
         except Exception as e:
             logger.error("Error streaming video: %s", str(e), exc_info=True)
             return JsonResponse({"error": str(e)}, status=500)

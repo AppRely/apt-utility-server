@@ -32,6 +32,26 @@ class VideoDataAdmin(BaseAdmin):
         "object_9_coordinates",
         "object_10_id",
         "object_10_coordinates",
+        "object_1_start_frame",
+        "object_1_end_frame",
+        "object_2_start_frame",
+        "object_2_end_frame",
+        "object_3_start_frame",
+        "object_3_end_frame",
+        "object_4_start_frame",
+        "object_4_end_frame",
+        "object_5_start_frame",
+        "object_5_end_frame",
+        "object_6_start_frame",
+        "object_6_end_frame",
+        "object_7_start_frame",
+        "object_7_end_frame",
+        "object_8_start_frame",
+        "object_8_end_frame",
+        "object_9_start_frame",
+        "object_9_end_frame",
+        "object_10_start_frame",
+        "object_10_end_frame",
         "tag",
         "timestamp",
         "confidence",
@@ -39,8 +59,8 @@ class VideoDataAdmin(BaseAdmin):
         "updated_at",
     )
 
-    list_filter = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "tag", "timestamp", "confidence")  
-    search_fields = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "tag", "timestamp", "confidence")
+    list_filter = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "object_1_start_frame", "object_1_end_frame", "object_2_start_frame", "object_2_end_frame", "object_3_start_frame", "object_3_end_frame", "object_4_start_frame", "object_4_end_frame", "object_5_start_frame", "object_5_end_frame", "object_6_start_frame", "object_6_end_frame", "object_7_start_frame", "object_7_end_frame", "object_8_start_frame", "object_8_end_frame", "object_9_start_frame", "object_9_end_frame", "object_10_start_frame", "object_10_end_frame", "tag", "timestamp", "confidence")  
+    search_fields = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "object_1_start_frame", "object_1_end_frame", "object_2_start_frame", "object_2_end_frame", "object_3_start_frame", "object_3_end_frame", "object_4_start_frame", "object_4_end_frame", "object_5_start_frame", "object_5_end_frame", "object_6_start_frame", "object_6_end_frame", "object_7_start_frame", "object_7_end_frame", "object_8_start_frame", "object_8_end_frame", "object_9_start_frame", "object_9_end_frame", "object_10_start_frame", "object_10_end_frame", "tag", "timestamp", "confidence")
 
     readonly_fields = ("created_at", "updated_at")
 
