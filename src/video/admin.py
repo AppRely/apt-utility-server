@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import VideoData, Project
+from .models import VideoData, Project, ObjectTrack
 from src.common.admin import BaseAdmin
 
 
@@ -32,26 +32,6 @@ class VideoDataAdmin(BaseAdmin):
         "object_9_coordinates",
         "object_10_id",
         "object_10_coordinates",
-        "object_1_start_frame",
-        "object_1_end_frame",
-        "object_2_start_frame",
-        "object_2_end_frame",
-        "object_3_start_frame",
-        "object_3_end_frame",
-        "object_4_start_frame",
-        "object_4_end_frame",
-        "object_5_start_frame",
-        "object_5_end_frame",
-        "object_6_start_frame",
-        "object_6_end_frame",
-        "object_7_start_frame",
-        "object_7_end_frame",
-        "object_8_start_frame",
-        "object_8_end_frame",
-        "object_9_start_frame",
-        "object_9_end_frame",
-        "object_10_start_frame",
-        "object_10_end_frame",
         "tag",
         "timestamp",
         "confidence",
@@ -59,8 +39,8 @@ class VideoDataAdmin(BaseAdmin):
         "updated_at",
     )
 
-    list_filter = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "object_1_start_frame", "object_1_end_frame", "object_2_start_frame", "object_2_end_frame", "object_3_start_frame", "object_3_end_frame", "object_4_start_frame", "object_4_end_frame", "object_5_start_frame", "object_5_end_frame", "object_6_start_frame", "object_6_end_frame", "object_7_start_frame", "object_7_end_frame", "object_8_start_frame", "object_8_end_frame", "object_9_start_frame", "object_9_end_frame", "object_10_start_frame", "object_10_end_frame", "tag", "timestamp", "confidence")  
-    search_fields = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "object_1_start_frame", "object_1_end_frame", "object_2_start_frame", "object_2_end_frame", "object_3_start_frame", "object_3_end_frame", "object_4_start_frame", "object_4_end_frame", "object_5_start_frame", "object_5_end_frame", "object_6_start_frame", "object_6_end_frame", "object_7_start_frame", "object_7_end_frame", "object_8_start_frame", "object_8_end_frame", "object_9_start_frame", "object_9_end_frame", "object_10_start_frame", "object_10_end_frame", "tag", "timestamp", "confidence")
+    list_filter = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "tag", "timestamp", "confidence")  
+    search_fields = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "tag", "timestamp", "confidence")
 
     readonly_fields = ("created_at", "updated_at")
 
@@ -88,3 +68,22 @@ class ProjectAdmin(BaseAdmin):
     search_fields = ("project_name", "video_name")
     list_filter = ("status",)
     readonly_fields = ("created_at", "updated_at")
+
+@admin.register(ObjectTrack)
+class ObjectTrackAdmin(BaseAdmin):
+    list_display = (
+        "track_id",
+        "get_project_id",
+        "object_id",
+        "start_frame",
+        "end_frame",
+    )
+
+    search_fields = ("track_id", "project_id__project_id", "object_id")
+    list_filter = ("project_id__project_id", "object_id")
+
+    readonly_fields = () 
+    # Custom column for raw integer project_id
+    def get_project_id(self, obj):
+        return obj.project_id_id   # <-- REAL integer FK
+    get_project_id.short_description = "Project ID"

@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-
+from rest_framework import serializers
 from .models import Video, Project, VideoData
 from .serializers import (
     ProjectUploadSerializer, 
@@ -22,6 +22,8 @@ from .serializers import (
     FrameObjectRangeSerializer,
     FrameInfoSerializer,
     ProjectSerializer,
+    ListUniqueIdsSerializer,
+    ObjectTrackDetailsSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -667,4 +669,62 @@ class VideoViewSet(viewsets.ModelViewSet):
         )
         return row.frame_no if row else None
 
-    
+    @swagger_auto_schema(
+        operation_description="Get list of all unique object IDs for the project.",
+        responses={200: "List of unique IDs", 400: "Validation error", 500: "Server error"}
+    )
+    @action(detail=True, methods=['get'], url_path='unique-ids')
+    def get_unique_ids(self, request, pk=None):
+        try:
+            serializer = ListUniqueIdsSerializer(data={}, context={"project_id": pk})
+            serializer.is_valid(raise_exception=True)
+
+            payload = serializer.get_all_ids()
+            return JsonResponse(payload, status=200)
+
+        except serializers.ValidationError as ve:
+            return JsonResponse(ve.detail, status=400)
+
+        except Exception as e:
+            logger.error(f"Error getting unique IDs: {str(e)}", exc_info=True)
+            return JsonResponse({"error": "Server Error", "detail": str(e)}, status=500)
+
+
+    @swagger_auto_schema(
+        operation_description="Get start/end frame for a unique object and check if a frame lies inside the range.",
+        manual_parameters=[
+            openapi.Parameter(
+                "frame", openapi.IN_QUERY, type=openapi.TYPE_INTEGER,
+                required=True, description="Frame number to check"
+            )
+        ],
+        responses={200: "Object details", 400: "Validation error", 404: "Not Found", 500: "Server Error"}
+    )
+    @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
+    def get_unique_id_details(self, request, pk=None, object_id=None):
+        try:
+            frame_value = request.query_params.get("frame")
+
+            if frame_value in (None, "", "null"):
+                return JsonResponse(
+                    {"frame": ["Frame query parameter is required."]}, status=400
+                )
+
+            serializer = ObjectTrackDetailsSerializer(
+                data={"object_id": object_id, "frame": frame_value},
+                context={"project_id": pk},
+            )
+            serializer.is_valid(raise_exception=True)
+
+            payload = serializer.get_object_data()
+            return JsonResponse(payload, status=200)
+
+        except serializers.ValidationError as ve:
+            return JsonResponse({"validation_error": ve.detail}, status=400)
+
+        except ObjectTrack.DoesNotExist:
+            return JsonResponse({"error": "Object not found"}, status=404)
+
+        except Exception as e:
+            logger.error(f"Error: {str(e)}", exc_info=True)
+            return JsonResponse({"error": "Server Error", "detail": str(e)}, status=500)
