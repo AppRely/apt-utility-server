@@ -15,7 +15,7 @@ from rest_framework.permissions import AllowAny
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import serializers
-from .models import Video, Project, VideoData
+from .models import Video, Project, VideoData, ObjectTrack
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
@@ -23,7 +23,8 @@ from .serializers import (
     FrameInfoSerializer,
     ProjectSerializer,
     ListUniqueIdsSerializer,
-    ObjectTrackDetailsSerializer
+    ObjectTrackDetailsSerializer,
+    LinkObjectSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -728,3 +729,29 @@ class VideoViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error: {str(e)}", exc_info=True)
             return JsonResponse({"error": "Server Error", "detail": str(e)}, status=500)
+
+    
+    @swagger_auto_schema(
+    method="put",
+    operation_description="Merge object_2 into object_1.",
+    request_body=LinkObjectSerializer,
+    responses={200: "Objects merged successfully"}
+    )
+    @action(detail=True, methods=["put"], url_path="link-objects")
+    def link_objects(self, request, pk=None):
+        """
+        PUT /api/v1/videos/{video_id}/link-objects/
+        """
+        try:
+            serializer = LinkObjectSerializer(
+                data=request.data,
+                context={"video_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+
+            payload = serializer.merge_data()
+            return JsonResponse(payload)
+
+        except Exception as e:
+            logger.error(f"Error linking objects: {str(e)}", exc_info=True)
+            return JsonResponse({"error": str(e)}, status=500)

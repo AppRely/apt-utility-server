@@ -253,6 +253,8 @@ class ProjectUploadSerializer(serializers.Serializer):
                     object_id=true_object_id,     # ✔ Save REAL object ID
                     start_frame=start_f,
                     end_frame=end_f,
+                    object_status=1,          # active by default
+                    operation_note=None,      # no operation yet
                 )
             )
 
@@ -553,8 +555,15 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
             raise serializers.ValidationError({"project_id": "Invalid project ID"})
 
         # Validate object exists
-        if not ObjectTrack.objects.filter(project_id=project_id, object_id=obj_id).exists():
-            raise serializers.ValidationError({"object_id": "Object ID not found"})
+        obj = ObjectTrack.objects.filter(project_id_id=project_id, object_id=obj_id).first()
+        if not obj:
+            # object doesn't exist at all → mark and continue
+            data["object_missing"] = True
+            return data
+
+        # pass object row to next method
+        data["object_row"] = obj
+
 
         # Validate frame >= 0
         if frame < 0:
@@ -567,9 +576,30 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
         obj_id = self.validated_data["object_id"]
         frame = self.validated_data["frame"]
 
-        row = ObjectTrack.objects.get(project_id=project_id, object_id=obj_id)
+        row = self.validated_data.get("object_row")
 
+        # Case 1 — Object doesn't exist
+        if self.validated_data.get("object_missing"):
+            return {
+                "project_id": project_id,
+                "object_id": obj_id,
+                "message": "Object ID not found in database",
+                "is_active": False
+            }
+
+        # Case 2 — Object exists but inactive
+        if row.object_status == 0:
+            return {
+                "project_id": project_id,
+                "object_id": obj_id,
+                "message": "Object is inactive",
+                "is_active": False,
+                "operation_note": row.operation_note
+            }
+
+        # Case 3 — Active: normal logic
         is_inside = row.start_frame <= frame <= row.end_frame
+
 
         return {
             "project_id": project_id,
@@ -577,6 +607,100 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
             "start_frame": row.start_frame,
             "end_frame": row.end_frame,
             "is_inside": is_inside,
+            "object_status": row.object_status,
+            "operation_note": row.operation_note,
+        }
+
+
+class LinkObjectSerializer(serializers.Serializer):
+    object_1_id = serializers.IntegerField(required=True)
+    object_1_start = serializers.IntegerField(required=True)
+    object_1_end = serializers.IntegerField(required=True)
+
+    object_2_id = serializers.IntegerField(required=True)
+    object_2_start = serializers.IntegerField(required=True)
+    object_2_end = serializers.IntegerField(required=True)
+
+    def validate(self, data):
+        video_id = self.context.get("video_id")
+
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video_id": "Invalid Video ID"})
+
+        if data["object_1_id"] == data["object_2_id"]:
+            raise serializers.ValidationError("Object IDs cannot be the same.")
+
+        return data
+
+    def merge_data(self):
+        """
+        Merge object_2 into object_1:
+        - In VideoData: replace object_2_id with object_1_id in the given frame range.
+        - In ObjectTrack: extend object_1 range, mark object_2 as inactive with a 'link' note.
+        """
+        data = self.validated_data
+        project_id = self.context.get("video_id")
+
+        obj1 = data["object_1_id"]
+        obj2 = data["object_2_id"]
+        start2 = data["object_2_start"]
+        end2 = data["object_2_end"]
+
+        # 1) Update main table (video_data)
+        rows = VideoData.objects.filter(
+            video_id=project_id,
+            frame_no__gte=start2,
+            frame_no__lte=end2
+        )
+
+        rows_updated = 0
+        for row in rows:
+            changed = False
+            for i in range(1, 10 + 1):
+                field = f"object_{i}_id"
+                if getattr(row, field) == obj2:
+                    setattr(row, field, obj1)
+                    changed = True
+            if changed:
+                row.save()
+                rows_updated += 1
+
+        # 2) Update object_track table (no delete now)
+        obj1_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj1)
+        obj2_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj2)
+
+        # Extend obj1 range
+        obj1_row.start_frame = min(obj1_row.start_frame, obj2_row.start_frame)
+        obj1_row.end_frame = max(obj1_row.end_frame, obj2_row.end_frame)
+        obj1_row.object_status = 1  # keep active
+        # Optional: note that it has absorbed another object
+        obj1_row.operation_note = "link_target"  # or "merged_from_object_2"
+        obj1_row.save()
+
+        # Mark obj2 as inactive + note
+        obj2_row.object_status = 0  # inactive
+        obj2_row.operation_note = f"linked_into_object_{obj1}"
+        obj2_row.save()
+
+        return {
+            "status": "success",
+            "message": "Objects merged successfully",
+            "video_id": project_id,
+            "rows_updated_main_table": rows_updated,
+            "object_track_object_1": {
+                "object_id": obj1,
+                "start_frame": obj1_row.start_frame,
+                "end_frame": obj1_row.end_frame,
+                "object_status": obj1_row.object_status,
+                "operation_note": obj1_row.operation_note,
+            },
+            "object_track_object_2": {
+                "object_id": obj2,
+                "start_frame": obj2_row.start_frame,
+                "end_frame": obj2_row.end_frame,
+                "object_status": obj2_row.object_status,
+                "operation_note": obj2_row.operation_note,
+            },
         }
 
 

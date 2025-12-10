@@ -77,6 +77,8 @@ class ObjectTrackAdmin(BaseAdmin):
         "object_id",
         "start_frame",
         "end_frame",
+        "object_status",       
+        "operation_note", 
     )
 
     search_fields = ("track_id", "project_id__project_id", "object_id")

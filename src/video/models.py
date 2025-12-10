@@ -95,6 +95,11 @@ class ObjectTrack(models.Model):
     start_frame = models.IntegerField()
     end_frame = models.IntegerField()
 
+    # 1 = active, 0 = inactive
+    object_status = models.IntegerField(default=1)
+    # e.g. "link", "swap", etc.
+    operation_note = models.CharField(max_length=255, null=True, blank=True)
+
     class Meta:
         db_table = "object_track"
         indexes = [
