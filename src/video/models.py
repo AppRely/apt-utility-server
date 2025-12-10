@@ -109,6 +109,17 @@ class ObjectTrack(models.Model):
         return f"Object {self.object_id} | ProjectID {self.project_id_id}"
 
 
+class ActivityLog(models.Model):
+    activity_id = models.AutoField(primary_key=True)
+    project_id = models.IntegerField()
+    objects_data = models.JSONField()  
+    operation = models.CharField(max_length=255)
+    activity_updated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "activity_log"
+
+
 class Video(models.Model):
     id = models.AutoField(primary_key=True)
     project_name = models.CharField(max_length=255)

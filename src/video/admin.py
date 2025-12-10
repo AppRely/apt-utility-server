@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import VideoData, Project, ObjectTrack
+from .models import VideoData, Project, ObjectTrack, ActivityLog
 from src.common.admin import BaseAdmin
 
 
@@ -89,3 +89,18 @@ class ObjectTrackAdmin(BaseAdmin):
     def get_project_id(self, obj):
         return obj.project_id_id   # <-- REAL integer FK
     get_project_id.short_description = "Project ID"
+
+
+@admin.register(ActivityLog)
+class ActivityLogAdmin(BaseAdmin):
+    list_display = (
+        "activity_id",
+        "project_id",
+        "objects_data",
+        "operation",
+        "activity_updated_at",
+    )
+
+    search_fields = ("activity_id", "project_id")
+    list_filter = ("project_id",)
+    readonly_fields = ("activity_updated_at",)

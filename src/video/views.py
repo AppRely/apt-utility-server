@@ -12,10 +12,11 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import serializers
-from .models import Video, Project, VideoData, ObjectTrack
+from .models import Video, Project, VideoData, ObjectTrack, ActivityLog
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
@@ -24,7 +25,8 @@ from .serializers import (
     ProjectSerializer,
     ListUniqueIdsSerializer,
     ObjectTrackDetailsSerializer,
-    LinkObjectSerializer
+    LinkObjectSerializer,
+    ActivityLogSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -755,3 +757,56 @@ class VideoViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error linking objects: {str(e)}", exc_info=True)
             return JsonResponse({"error": str(e)}, status=500)
+
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
+        request_body=ActivityLogSerializer,
+        responses={201: "Activity logged successfully", 400: "Validation error", 500: "Internal server error"}
+    )
+    @action(detail=True, methods=["post"], url_path="add-activity-log")
+    def add_activity_log(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/add-activity-log/
+        """
+        try:
+            # Clone request data so we can modify it
+            data = request.data.copy()
+            data["project_id"] = pk
+
+            serializer = ActivityLogSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Activity log entry created",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except serializers.ValidationError as ve:
+            # DRF validation error -> return friendly error message
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,   # precise field errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception as e:
+            # Unexpected system-level error (DB, code bug, etc.)
+            logger.error(f"Error creating activity log: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while creating the activity log.",
+                    "errors": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

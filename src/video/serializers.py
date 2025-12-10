@@ -7,7 +7,7 @@ from django.db import transaction
 from django.core.files.uploadedfile import UploadedFile
 from rest_framework import serializers
 
-from .models import Project, Video, VideoData, ObjectTrack
+from .models import Project, Video, VideoData, ObjectTrack, ActivityLog
 from .TrkFile import Trk
 
 
@@ -707,6 +707,75 @@ class LinkObjectSerializer(serializers.Serializer):
                 "object_status": obj2_row.object_status,
                 "operation_note": obj2_row.operation_note,
             },
+        }
+
+
+class ActivityLogSerializer(serializers.Serializer):
+
+    project_id = serializers.IntegerField(required=True)
+    objects_data = serializers.JSONField(required=True)
+    operation = serializers.CharField(max_length=255, required=True)
+
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Invalid project_id")
+        return value
+
+    def validate_objects_data(self, value):
+        # -------------------------------
+        # 1. If Swagger sends string → convert to JSON
+        # -------------------------------
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("objects_data must be valid JSON.")
+
+        # -------------------------------
+        # 2. Must be a dict containing "objects"
+        # -------------------------------
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("objects_data must be a JSON object.")
+
+        if "objects" not in value:
+            raise serializers.ValidationError("objects_data must contain key 'objects'.")
+
+        objects_list = value["objects"]
+
+        if not isinstance(objects_list, list):
+            raise serializers.ValidationError("'objects' must be a list.")
+
+        # -------------------------------
+        # 3. Validate each object
+        # -------------------------------
+        for obj in objects_list:
+            if not isinstance(obj, dict):
+                raise serializers.ValidationError("Each object must be a dictionary.")
+
+            required = ["id", "start_frame", "end_frame"]
+
+            for field in required:
+                if field not in obj:
+                    raise serializers.ValidationError(f"Object missing '{field}'")
+
+                if not isinstance(obj[field], int):
+                    raise serializers.ValidationError(f"'{field}' must be integer.")
+
+        return value
+
+    def create(self, validated_data):
+        activity = ActivityLog.objects.create(
+            project_id=validated_data["project_id"],
+            objects_data=validated_data["objects_data"],
+            operation=validated_data["operation"]
+        )
+
+        return {
+            "activity_id": activity.activity_id,
+            "project_id": activity.project_id,
+            "objects_data": activity.objects_data,
+            "operation": activity.operation,
+            "activity_updated_at": activity.activity_updated_at
         }
 
 
