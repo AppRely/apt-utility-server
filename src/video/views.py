@@ -394,7 +394,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                             # Delete the fields you don't want
                             frame.pop('confidence', None)
                             frame.pop('tag', None) 
-                            # frame.pop('timestamp', None)
+                            frame.pop('timestamp', None)
             
             return JsonResponse(payload)
         return JsonResponse(serializer.errors, status=400)

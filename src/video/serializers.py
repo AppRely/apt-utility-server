@@ -479,13 +479,19 @@ class FrameInfoSerializer(serializers.Serializer):
             
             
             if obj_id is not None:
-                idx = i - 1
+                track = ObjectTrack.objects.filter(
+                project_id_id=video_id,
+                object_id=obj_id
+            ).first()
+
                 objects.append({
                     "object_id": obj_id,
                     "coordinates": coords,
-                    "confidence": confs[idx] if idx < len(confs) else None,
-                    "tag": tags[idx] if idx < len(tags) else None,
-                    "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+                    "start_frame": track.start_frame if track else None,
+                    "end_frame": track.end_frame if track else None,
+                    # "confidence": confs[idx] if idx < len(confs) else None,
+                    # "tag": tags[idx] if idx < len(tags) else None,
+                    # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
                     })
 
         # Return structured response
