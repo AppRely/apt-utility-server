@@ -54,6 +54,11 @@ class ProjectUploadSerializer(serializers.Serializer):
             if trk.getframe(trk.T0) is None:
                 raise ValueError("Upload failed — no TRK data extracted.")
 
+            if Project.objects.filter(project_name=project_name).exists():
+                    raise serializers.ValidationError({
+                        "project_name": "Project name already exists. Please use a new name."
+                    })
+
             # 3. Create project ONLY after TRK passes validation
             with transaction.atomic():
                 project = Project.objects.create(
@@ -524,6 +529,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+
 class ListUniqueIdsSerializer(serializers.Serializer):
     def validate(self, data):
         project_id = self.context.get("project_id")
@@ -537,7 +543,8 @@ class ListUniqueIdsSerializer(serializers.Serializer):
         project_id = self.context.get("project_id")
 
         ids = (
-            ObjectTrack.objects.filter(project_id=project_id)
+            ObjectTrack.objects.filter(project_id_id=project_id,object_status=1)
+            .order_by("object_id")
             .values_list("object_id", flat=True)
         )
 
@@ -779,3 +786,49 @@ class ActivityLogSerializer(serializers.Serializer):
         }
 
 
+class ActivityLogRequestSerializer(serializers.Serializer):
+    """
+    Serializer to validate video ID and fetch all Activity Logs based on video_id.
+    """
+    video_id = serializers.IntegerField(required=True, help_text="Video ID")
+
+    def validate(self, attrs):
+        video_id = attrs.get('video_id')
+
+        # Video ID must exist in Project table
+        if not Project.objects.filter(video_id=video_id).exists():
+            raise serializers.ValidationError({"video_id": f"Video with ID {video_id} does not exist"})
+
+        return attrs
+
+    def get_data(self):
+        """
+        Fetch all activity logs for the given video_id.
+        """
+        video_id = self.validated_data['video_id']
+
+        # 1. Get all projects linked to this video
+        project_ids = list(
+            Project.objects.filter(video_id=video_id)
+                           .values_list('project_id', flat=True)
+        )
+
+        # 2. Fetch activity logs for these projects
+        logs = ActivityLog.objects.filter(project_id__in=project_ids)
+
+        # 3. Structure the response
+        logs_data = []
+        for log in logs:
+            logs_data.append({
+                "activity_id": log.activity_id,
+                "project_id": log.project_id,
+                "objects_data": log.objects_data,
+                "operation": log.operation,
+                "activity_updated_at": log.activity_updated_at,
+            })
+
+        return {
+            "video_id": video_id,
+            "total_logs": len(logs_data),
+            "logs": logs_data
+        }

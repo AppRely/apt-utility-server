@@ -26,7 +26,8 @@ from .serializers import (
     ListUniqueIdsSerializer,
     ObjectTrackDetailsSerializer,
     LinkObjectSerializer,
-    ActivityLogSerializer
+    ActivityLogSerializer,
+    ActivityLogRequestSerializer,
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -511,6 +512,9 @@ class VideoViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="project-upload", 
             parser_classes=[MultiPartParser, FormParser])
     def project_upload(self, request):
+        """
+        POST /videos/project-upload/ → expects form-data with project_name, video_file, tracking_file
+        """
         try:
             if "video_file" not in request.FILES:
                 return JsonResponse({
@@ -678,6 +682,9 @@ class VideoViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['get'], url_path='unique-ids')
     def get_unique_ids(self, request, pk=None):
+        """
+        GET /api/v1/videos/{project_id}/unique-ids/  
+        """
         try:
             serializer = ListUniqueIdsSerializer(data={}, context={"project_id": pk})
             serializer.is_valid(raise_exception=True)
@@ -705,6 +712,9 @@ class VideoViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
     def get_unique_id_details(self, request, pk=None, object_id=None):
+        """
+        GET /api/v1/videos/{project_id}/unique-ids/{object_id}/?frame=NUM
+        """
         try:
             frame_value = request.query_params.get("frame")
 
@@ -809,4 +819,57 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "errors": str(e)
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @swagger_auto_schema(
+        operation_description="Get all activity logs related to a video using video ID.",
+        manual_parameters=[
+            openapi.Parameter('video_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description='Video ID'),
+        ],
+        responses={200: "List of activity logs", 400: "Validation error", 404: "Video not found", 500: "Server error"},
+        pagination_class=None
+    )
+    @action(detail=False, methods=['get'], url_path='activity/logs')
+    def get_activity_logs(self, request):
+        """
+        GET /api/v1/videos/activity/logs?video_id=ID 
+        """
+        try:
+            serializer = ActivityLogRequestSerializer(data=request.query_params)
+
+            # VALIDATION FAILS
+            if not serializer.is_valid():
+                return JsonResponse(
+                    {"error": serializer.errors},
+                    status=400
+                )
+
+            # FETCH DATA (Serializer handles database logic)
+            payload = serializer.get_data()
+
+            # If serializer returns empty projects or logs
+            if payload.get("total_logs", 0) == 0:
+                return JsonResponse(
+                    {
+                        "message": "No activity logs found for this video_id",
+                        "video_id": payload.get("video_id")
+                    },
+                    status=404
+                )
+
+            return JsonResponse(payload, safe=False, status=200)
+
+        except Project.DoesNotExist:
+            return JsonResponse(  
+                {"error": "Video or associated project not found"},
+                status=404
+            )
+
+        except Exception as e:
+            # LOG THIS (for debugging)
+            print("ERROR in get_activity_logs:", str(e))
+
+            return JsonResponse(
+                {"error": "An unexpected error occurred", "details": str(e)},
+                status=500
             )
