@@ -1,5 +1,7 @@
 import math
 import os
+import re
+import json
 
 import numpy as np
 from django.conf import settings
@@ -720,7 +722,7 @@ class LinkObjectSerializer(serializers.Serializer):
 class ActivityLogSerializer(serializers.Serializer):
 
     project_id = serializers.IntegerField(required=True)
-    objects = serializers.JSONField(required=True)   
+    objects = serializers.CharField(required=True)
     operation = serializers.CharField(max_length=255, required=True)
 
     def validate_project_id(self, value):
@@ -728,19 +730,34 @@ class ActivityLogSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid project_id")
         return value
 
-    def validate_objects_data(self, value):
-        # -------------------------------
-        # 1. If Swagger sends string → convert to JSON
-        # -------------------------------
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except json.JSONDecodeError:
-                raise serializers.ValidationError("objects_data must be valid JSON.")
+    def validate_objects(self, value):
 
-        # -------------------------------
-        # 2. Must be a dict containing "objects"
-        # -------------------------------
+        # CASE 1: Frontend sends broken JSON from multipart/form-data
+        if isinstance(value, str):
+            cleaned = value.strip()
+
+            # Remove outer brackets [ ... ] if they exist
+            if cleaned.startswith('[') and cleaned.endswith(']'):
+                cleaned = cleaned[1:-1].strip()
+
+            # Replace 0: → "0":
+            cleaned = re.sub(r'(\d+)\s*:', r'"\1":', cleaned)
+
+            # Wrap inside { } if not already a dict
+            if not cleaned.startswith("{"):
+                cleaned = "{" + cleaned + "}"
+
+            try:
+                raw_dict = json.loads(cleaned)
+                value = list(raw_dict.values())
+            except Exception:
+                raise serializers.ValidationError("objects must be valid JSON.")
+
+        # CASE 2: Already a dict {0:{...},1:{...}}
+        elif isinstance(value, dict):
+            value = list(value.values())
+
+        # Must be list now
         if not isinstance(value, list):
             raise serializers.ValidationError("'objects' must be a list.")
 
