@@ -720,7 +720,7 @@ class LinkObjectSerializer(serializers.Serializer):
 class ActivityLogSerializer(serializers.Serializer):
 
     project_id = serializers.IntegerField(required=True)
-    objects_data = serializers.JSONField(required=True)
+    objects = serializers.JSONField(required=True)   
     operation = serializers.CharField(max_length=255, required=True)
 
     def validate_project_id(self, value):
@@ -741,21 +741,13 @@ class ActivityLogSerializer(serializers.Serializer):
         # -------------------------------
         # 2. Must be a dict containing "objects"
         # -------------------------------
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("objects_data must be a JSON object.")
-
-        if "objects" not in value:
-            raise serializers.ValidationError("objects_data must contain key 'objects'.")
-
-        objects_list = value["objects"]
-
-        if not isinstance(objects_list, list):
+        if not isinstance(value, list):
             raise serializers.ValidationError("'objects' must be a list.")
 
         # -------------------------------
         # 3. Validate each object
         # -------------------------------
-        for obj in objects_list:
+        for obj in value:
             if not isinstance(obj, dict):
                 raise serializers.ValidationError("Each object must be a dictionary.")
 
@@ -773,14 +765,14 @@ class ActivityLogSerializer(serializers.Serializer):
     def create(self, validated_data):
         activity = ActivityLog.objects.create(
             project_id=validated_data["project_id"],
-            objects_data=validated_data["objects_data"],
+            objects_data={"objects": validated_data["objects"]},  
             operation=validated_data["operation"]
         )
 
         return {
             "activity_id": activity.activity_id,
             "project_id": activity.project_id,
-            "objects_data": activity.objects_data,
+            "objects": validated_data["objects"],
             "operation": activity.operation,
             "activity_updated_at": activity.activity_updated_at
         }
