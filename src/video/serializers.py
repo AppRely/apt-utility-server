@@ -722,7 +722,7 @@ class LinkObjectSerializer(serializers.Serializer):
 class ActivityLogSerializer(serializers.Serializer):
 
     project_id = serializers.IntegerField(required=True)
-    objects = serializers.CharField(required=True)
+    objects_data = serializers.JSONField(required=True)
     operation = serializers.CharField(max_length=255, required=True)
 
     def validate_project_id(self, value):
@@ -730,41 +730,34 @@ class ActivityLogSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid project_id")
         return value
 
-    def validate_objects(self, value):
-
-        # CASE 1: Frontend sends broken JSON from multipart/form-data
+    def validate_objects_data(self, value):
+        # -------------------------------
+        # 1. If Swagger sends string → convert to JSON
+        # -------------------------------
         if isinstance(value, str):
-            cleaned = value.strip()
-
-            # Remove outer brackets [ ... ] if they exist
-            if cleaned.startswith('[') and cleaned.endswith(']'):
-                cleaned = cleaned[1:-1].strip()
-
-            # Replace 0: → "0":
-            cleaned = re.sub(r'(\d+)\s*:', r'"\1":', cleaned)
-
-            # Wrap inside { } if not already a dict
-            if not cleaned.startswith("{"):
-                cleaned = "{" + cleaned + "}"
-
             try:
-                raw_dict = json.loads(cleaned)
-                value = list(raw_dict.values())
-            except Exception:
-                raise serializers.ValidationError("objects must be valid JSON.")
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("objects_data must be valid JSON.")
 
-        # CASE 2: Already a dict {0:{...},1:{...}}
-        elif isinstance(value, dict):
-            value = list(value.values())
+        # -------------------------------
+        # 2. Must be a dict containing "objects"
+        # -------------------------------
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("objects_data must be a JSON object.")
 
-        # Must be list now
-        if not isinstance(value, list):
+        if "objects" not in value:
+            raise serializers.ValidationError("objects_data must contain key 'objects'.")
+
+        objects_list = value["objects"]
+
+        if not isinstance(objects_list, list):
             raise serializers.ValidationError("'objects' must be a list.")
 
         # -------------------------------
         # 3. Validate each object
         # -------------------------------
-        for obj in value:
+        for obj in objects_list:
             if not isinstance(obj, dict):
                 raise serializers.ValidationError("Each object must be a dictionary.")
 
@@ -782,14 +775,14 @@ class ActivityLogSerializer(serializers.Serializer):
     def create(self, validated_data):
         activity = ActivityLog.objects.create(
             project_id=validated_data["project_id"],
-            objects_data={"objects": validated_data["objects"]},  
+            objects_data=validated_data["objects_data"],
             operation=validated_data["operation"]
         )
 
         return {
             "activity_id": activity.activity_id,
             "project_id": activity.project_id,
-            "objects": validated_data["objects"],
+            "objects_data": activity.objects_data,
             "operation": activity.operation,
             "activity_updated_at": activity.activity_updated_at
         }
