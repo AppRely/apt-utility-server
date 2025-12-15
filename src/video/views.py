@@ -28,7 +28,8 @@ from .serializers import (
     LinkObjectSerializer,
     ActivityLogSerializer,
     ActivityLogRequestSerializer,
-    BreakObjectSerializer
+    BreakObjectSerializer,
+    SwapObjectSerializer,
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -932,3 +933,27 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+    @swagger_auto_schema(
+        method="put",
+        operation_description="Swap object_1 with object_2 inside VideoData and ObjectTrack.",
+        request_body=SwapObjectSerializer,
+        responses={200: "Swap successful", 400: "Validation error"}
+    )
+    @action(detail=True, methods=["put"], url_path="swap-objects")
+    def swap_objects(self, request, pk=None):
+        try:
+            serializer = SwapObjectSerializer(
+                data=request.data,
+                context={"video_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.swap_data()
+            return JsonResponse(result, status=200)
+
+        except serializers.ValidationError as ve:
+            return JsonResponse({"validation_error": ve.detail}, status=400)
+
+        except Exception as e:
+            logger.error(f"Swap Error: {str(e)}")
+            return JsonResponse({"error": "Swap failed", "details": str(e)}, status=500)

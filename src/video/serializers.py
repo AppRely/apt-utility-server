@@ -968,3 +968,144 @@ class BreakObjectSerializer(serializers.Serializer):
             "new_range": f"{break_frame + 1}-{end_frame}",
         }
 
+
+class SwapObjectSerializer(serializers.Serializer):
+    """
+    Swap two object ids and their occurrences in VideoData + ObjectTrack.
+    """
+    object_1_id = serializers.IntegerField(required=True)
+    object_1_start = serializers.IntegerField(required=True)
+    object_1_end = serializers.IntegerField(required=True)
+
+    object_2_id = serializers.IntegerField(required=True)
+    object_2_start = serializers.IntegerField(required=True)
+    object_2_end = serializers.IntegerField(required=True)
+
+    def validate(self, data):
+        video_id = self.context.get("video_id")
+
+        # Check project/video
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video_id": "Invalid Video ID"})
+
+        # Cannot swap same ID
+        if data["object_1_id"] == data["object_2_id"]:
+            raise serializers.ValidationError("Object IDs cannot be the same.")
+
+        # Ensure object tracks exist
+        if not ObjectTrack.objects.filter(project_id_id=video_id, object_id=data["object_1_id"]).exists():
+            raise serializers.ValidationError({"object_1_id": "Object 1 not found"})
+
+        if not ObjectTrack.objects.filter(project_id_id=video_id, object_id=data["object_2_id"]).exists():
+            raise serializers.ValidationError({"object_2_id": "Object 2 not found"})
+        
+        if data["object_1_start"] > data["object_1_end"]:
+            raise serializers.ValidationError({"object_1_range": "Invalid range"})
+
+        if data["object_2_start"] > data["object_2_end"]:
+            raise serializers.ValidationError({"object_2_range": "Invalid range"})
+
+        return data
+
+    def swap_data(self):
+        data = self.validated_data
+        video_id = self.context.get("video_id")
+
+        obj1 = data["object_1_id"]
+        obj2 = data["object_2_id"]
+
+        s1, e1 = data["object_1_start"], data["object_1_end"]
+        s2, e2 = data["object_2_start"], data["object_2_end"]
+
+        SENTINEL = -99999999
+        rows_updated = 0
+
+        # union range
+        min_frame = min(s1, s2)
+        max_frame = max(e1, e2)
+
+        with transaction.atomic():
+
+            # UPDATE video table
+            qs = VideoData.objects.filter(
+                video_id=video_id,
+                frame_no__gte=min_frame,
+                frame_no__lte=max_frame
+            )
+
+            for row in qs:
+                changed = False
+
+                # mark obj1 → SENTINEL (only inside obj1 range)
+                if s1 <= row.frame_no <= e1:
+                    for i in range(1, 11):
+                        field = f"object_{i}_id"
+                        if getattr(row, field) == obj1:
+                            setattr(row, field, SENTINEL)
+                            changed = True
+
+                # obj2 → obj1 (inside obj2 range)
+                if s2 <= row.frame_no <= e2:
+                    for i in range(1, 11):
+                        field = f"object_{i}_id"
+                        if getattr(row, field) == obj2:
+                            setattr(row, field, obj1)
+                            changed = True
+
+                # SENTINEL → obj2
+                for i in range(1, 11):
+                    field = f"object_{i}_id"
+                    if getattr(row, field) == SENTINEL:
+                        setattr(row, field, obj2)
+                        changed = True
+
+                if changed:
+                    row.save()
+                    rows_updated += 1
+
+            # UPDATE object track (swap IDs)
+            obj1_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj1)
+            obj2_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj2)
+
+            # Use sentinel swap to avoid collision
+            obj1_row.object_id = SENTINEL
+            obj1_row.operation_note = f"swap_with_objectID_{obj1}"
+            obj1_row.save()
+
+            obj2_row.object_id = obj1
+            obj2_row.operation_note = f"swap_with_objectID_{obj2}"
+            obj2_row.save()
+
+            obj1_row.object_id = obj2
+            obj1_row.save()
+
+            # refresh rows after swap
+            obj1_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj2)
+            obj2_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj1)
+
+
+        # Response summary
+        return {
+                "status": "success",
+                "message": "Objects swapped successfully",
+                "video_id": video_id,
+                "rows_updated": rows_updated,
+
+                "object_track_object_1": {
+                    "original_object_id": obj1,
+                    "current_object_id": obj1_row.object_id,
+                    "start_frame": obj1_row.start_frame,
+                    "end_frame": obj1_row.end_frame,
+                    "object_status": obj1_row.object_status,
+                    "operation_note": obj1_row.operation_note,
+                },
+
+                "object_track_object_2": {
+                    "original_object_id": obj2,
+                    "current_object_id": obj2_row.object_id,
+                    "start_frame": obj2_row.start_frame,
+                    "end_frame": obj2_row.end_frame,
+                    "object_status": obj2_row.object_status,
+                    "operation_note": obj2_row.operation_note,
+                }
+            }
