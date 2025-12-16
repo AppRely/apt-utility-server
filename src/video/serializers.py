@@ -1109,3 +1109,119 @@ class SwapObjectSerializer(serializers.Serializer):
                     "operation_note": obj2_row.operation_note,
                 }
             }
+
+
+
+class DeleteObjectSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(required=True)
+    start_frame = serializers.IntegerField(required=True)
+    end_frame = serializers.IntegerField(required=True)
+
+    # ---------------------------
+    # VALIDATION
+    # ---------------------------
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        object_id = data["object_id"]
+        start_frame = data["start_frame"]
+        end_frame = data["end_frame"]
+
+        # 1️ Project validation
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError("Invalid project_id")
+
+        # 2️ Frame range validation
+        if start_frame > end_frame:
+            raise serializers.ValidationError(
+                "start_frame must be less than or equal to end_frame"
+            )
+
+        # 3️ObjectTrack validation (ACTIVE CHECK)
+        try:
+            obj_track = ObjectTrack.objects.get(
+                project_id_id=project_id,
+                object_id=object_id
+            )
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError("Object not found in object_track")
+
+        # IMPORTANT CHECK
+        if obj_track.object_status != 1:
+            raise serializers.ValidationError(
+                "Object is already inactive. No delete operation performed."
+            )
+
+        db_start = obj_track.start_frame
+        db_end = obj_track.end_frame
+
+        # Ensure delete range is inside lifecycle
+        if start_frame < db_start or end_frame > db_end:
+            raise serializers.ValidationError(
+                f"Delete range must be between {db_start} and {db_end}"
+            )
+
+        data["obj_track"] = obj_track
+        return data
+
+    # ---------------------------
+    # DYNAMIC OBJECT SLOT FETCH
+    # ---------------------------
+    def _get_object_id_fields(self):
+        return [
+            field.name
+            for field in VideoData._meta.fields
+            if field.name.startswith("object_") and field.name.endswith("_id")
+        ]
+
+    # ---------------------------
+    # CREATE (DELETE LOGIC)
+    # ---------------------------
+    def create(self, validated_data):
+        project_id = self.context["project_id"]
+
+        object_id = validated_data["object_id"]
+        start_frame = validated_data["start_frame"]
+        end_frame = validated_data["end_frame"]
+        obj_track = validated_data["obj_track"]
+
+        affected_frames = 0
+
+        with transaction.atomic():
+
+            object_fields = self._get_object_id_fields()
+
+            # Fetch frames in range
+            frames_qs = VideoData.objects.filter(
+                video_id=project_id,
+                frame_no__gte=start_frame,
+                frame_no__lte=end_frame
+            )
+
+            #  Nullify object slots
+            for row in frames_qs:
+                row_updated = False
+
+                for field in object_fields:
+                    if getattr(row, field) == object_id:
+                        coord_field = field.replace("_id", "_coordinates")
+                        setattr(row, field, None)
+                        setattr(row, coord_field, None)
+                        row_updated = True
+
+                if row_updated:
+                    row.save()
+                    affected_frames += 1
+
+            # Update ObjectTrack → mark inactive
+            obj_track.object_status = 0
+            obj_track.operation_note = (
+                f"deleted_frames_{start_frame}_to_{end_frame}"
+            )
+            obj_track.save(update_fields=["object_status", "operation_note"])
+
+        return {
+            "object_id": object_id,
+            "deleted_range": f"{start_frame}-{end_frame}",
+            "frames_affected": affected_frames,
+            "object_status": 0
+        }

@@ -30,6 +30,7 @@ from .serializers import (
     ActivityLogRequestSerializer,
     BreakObjectSerializer,
     SwapObjectSerializer,
+    DeleteObjectSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -957,3 +958,33 @@ class VideoViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Swap Error: {str(e)}")
             return JsonResponse({"error": "Swap failed", "details": str(e)}, status=500)
+
+
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Delete (nullify) an active object from video_data within a given frame range. Operation is allowed only if the object is active.",
+        request_body=DeleteObjectSerializer,
+        responses={200: "Object delete operation completed successfully", 400: "Validation error", 500: "Internal server error"},
+    )
+    @action(detail=True, methods=["post"], url_path="objects/delete")
+    def delete_object(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/objects/delete/
+        """
+        try:
+            serializer = DeleteObjectSerializer(
+                data=request.data,
+                context={"project_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.save()
+
+            return Response({"status": "success", "message": "Object deleted successfully", "data": result,}, status=status.HTTP_200_OK,)
+
+        except serializers.ValidationError as ve:
+            return Response({"status": "error", "message": "Delete operation not allowed", "errors": ve.detail,}, status=status.HTTP_400_BAD_REQUEST,)
+
+        except Exception as e:
+            logger.error(f"Error during delete object operation: {str(e)}", exc_info=True)
+            return Response({"status": "error", "message": "Something went wrong while deleting the object", "errors": str(e),}, status=status.HTTP_500_INTERNAL_SERVER_ERROR,)
