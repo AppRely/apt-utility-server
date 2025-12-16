@@ -86,6 +86,39 @@ class VideoData(models.Model):
     def __str__(self):
         return f"Video {self.video_id} | Frame {self.frame_no}"
 
+class ObjectTrack(models.Model):
+    track_id = models.AutoField(primary_key=True)
+
+    project_id = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="object_tracks")
+    object_id = models.IntegerField()
+
+    start_frame = models.IntegerField()
+    end_frame = models.IntegerField()
+
+    # 1 = active, 0 = inactive
+    object_status = models.IntegerField(default=1)
+    # e.g. "link", "swap", etc.
+    operation_note = models.CharField(max_length=255, null=True, blank=True)
+
+    class Meta:
+        db_table = "object_track"
+        indexes = [
+            models.Index(fields=["project_id", "object_id"]),
+        ]
+    def __str__(self):
+        return f"Object {self.object_id} | ProjectID {self.project_id_id}"
+
+
+class ActivityLog(models.Model):
+    activity_id = models.AutoField(primary_key=True)
+    project_id = models.IntegerField()
+    objects_data = models.JSONField()  
+    operation = models.CharField(max_length=255)
+    activity_updated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "activity_log"
+
 
 class Video(models.Model):
     id = models.AutoField(primary_key=True)

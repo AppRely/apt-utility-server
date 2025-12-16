@@ -13,16 +13,25 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-
-from .models import Video, Project, VideoData
+from rest_framework import serializers
+from .models import Video, Project, VideoData, ObjectTrack, ActivityLog
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
     FrameObjectRangeSerializer,
     FrameInfoSerializer,
     ProjectSerializer,
+    ListUniqueIdsSerializer,
+    ObjectTrackDetailsSerializer,
+    LinkObjectSerializer,
+    ActivityLogSerializer,
+    ActivityLogRequestSerializer,
+    BreakObjectSerializer,
+    SwapObjectSerializer,
+    DeleteObjectSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -337,6 +346,18 @@ class VideoViewSet(viewsets.ModelViewSet):
         responses={200: 'JSON payload for the requested frame range'},
     )
     @action(detail=True, methods=['get'], url_path='frame-object-range')
+    # def frame_object_range(self, request, pk=None):
+    #     """
+    #     GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
+    #     """
+    #     data = request.query_params.copy()
+    #     data['video_id'] = pk
+        
+    #     serializer = FrameObjectRangeSerializer(data=data)
+    #     if serializer.is_valid():
+    #         payload = serializer.get_data()
+    #         return JsonResponse(payload)
+    #     return JsonResponse(serializer.errors, status=400)
     def frame_object_range(self, request, pk=None):
         """
         GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
@@ -387,6 +408,17 @@ class VideoViewSet(viewsets.ModelViewSet):
                 serializer.extra_frames = fallback_frames
 
             payload = serializer.get_data()
+            
+            # Remove unwanted fields from response (in-place mutation)
+            if 'objects' in payload:
+                for obj in payload['objects']:
+                    if 'frames' in obj:
+                        for frame in obj['frames']:
+                            # Delete the fields you don't want
+                            frame.pop('confidence', None)
+                            frame.pop('tag', None) 
+                            frame.pop('timestamp', None)
+            
             return JsonResponse(payload)
         return JsonResponse(serializer.errors, status=400)
 
@@ -616,33 +648,60 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     # POST /videos/project-upload/ → expects form-data with project_name, video_file, tracking_file
     @swagger_auto_schema(
-        operation_description="Upload project video along with TRK tracking data and persist parsed detections.",
+        operation_description="Upload project video + TRK data",
         request_body=ProjectUploadSerializer,
-        responses={201: "Upload success", 400: "Validation error"},
+        responses={201: "Success", 400: "Validation error", 500: "Server error"},
     )
-    @action(
-        detail=False,
-        methods=["post"],
-        url_path="project-upload",
-        parser_classes=[MultiPartParser, FormParser],
-    )
+    @action(detail=False, methods=["post"], url_path="project-upload", 
+            parser_classes=[MultiPartParser, FormParser])
     def project_upload(self, request):
-        serializer = ProjectUploadSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        result = serializer.save()
-        return JsonResponse(
-            {
+        """
+        POST /videos/project-upload/ → expects form-data with project_name, video_file, tracking_file
+        """
+        try:
+            if "video_file" not in request.FILES:
+                return JsonResponse({
+                    "status": "error",
+                    "message": "Missing video_file"
+                }, status=400)
+                
+            serializer = ProjectUploadSerializer(data=request.data, context={"request": request})
+            
+            if not serializer.is_valid():
+                return JsonResponse({
+                    "status": "error", 
+                    "errors": serializer.errors
+                }, status=400)
+            
+            result = serializer.save()
+            project_id = result.get("project_id")
+            rows_inserted = result.get("rows_inserted", 0)
+            
+            return JsonResponse({
                 "status": "success",
-                "project_id": result["project_id"],
-                "rows_inserted": result["rows_inserted"],
+                "project_id": project_id,
+                "rows_inserted": rows_inserted,
                 "message": "Files saved and TRK data inserted successfully",
-            },
-            status=201,
-        )
+            }, status=201)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return JsonResponse({
+                "status": "error",
+                "message": f"Server error: {str(e)}"
+            }, status=500)
+    
 
+
+    #GET project list 
     @swagger_auto_schema(
-        operation_description="Get list of all in-progress projects with essential details",
-        responses={200: ProjectSerializer(many=True)},
+    operation_description="Get list of all in-progress projects with essential details",
+    responses={
+        200: ProjectSerializer(many=True),
+        400: "Invalid parameters",
+        500: "Server error"
+    },
     )
     @action(detail=False, methods=['get'], url_path='project-list')
     def project_list(self, request):
@@ -651,9 +710,24 @@ class VideoViewSet(viewsets.ModelViewSet):
         Returns only projects where project_status = 'inprogress'
         Ordered by newest first.
         """
-        projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
-        serializer = ProjectSerializer(projects, many=True)
-        return Response(serializer.data)
+        try:
+
+            projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
+
+            serializer = ProjectSerializer(projects, many=True)
+            return Response(serializer.data, status=200)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Failed to fetch projects",
+                    "error": str(e)
+                },
+                status=500
+            )
 
     @swagger_auto_schema(
         operation_description="Stream the project video file with HTTP Range support.",
@@ -676,7 +750,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 return JsonResponse({"error": "Video filename missing in project"}, status=404)
             
             if not file_path or not os.path.exists(file_path):
-                 return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
+                return JsonResponse({"error": f"Video file not found at {file_path}"}, status=404)
 
             range_header = request.headers.get('Range')
             if range_header:
@@ -689,7 +763,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             response['Cache-Control'] = 'public, max-age=3600'
             return response
         except Project.DoesNotExist:
-             return JsonResponse({"error": "Project not found"}, status=404)
+            return JsonResponse({"error": "Project not found"}, status=404)
         except Exception as e:
             logger.error("Error streaming video: %s", str(e), exc_info=True)
             return JsonResponse({"error": str(e)}, status=500)
@@ -745,4 +819,312 @@ class VideoViewSet(viewsets.ModelViewSet):
         )
         return row.frame_no if row else None
 
+    @swagger_auto_schema(
+        operation_description="Get list of all unique object IDs for the project.",
+        responses={200: "List of unique IDs", 400: "Validation error", 500: "Server error"}
+    )
+    @action(detail=True, methods=['get'], url_path='unique-ids')
+    def get_unique_ids(self, request, pk=None):
+        """
+        GET /api/v1/videos/{project_id}/unique-ids/  
+        """
+        try:
+            serializer = ListUniqueIdsSerializer(data={}, context={"project_id": pk})
+            serializer.is_valid(raise_exception=True)
+
+            payload = serializer.get_all_ids()
+            return JsonResponse(payload, status=200)
+
+        except serializers.ValidationError as ve:
+            return JsonResponse(ve.detail, status=400)
+
+        except Exception as e:
+            logger.error(f"Error getting unique IDs: {str(e)}", exc_info=True)
+            return JsonResponse({"error": "Server Error", "detail": str(e)}, status=500)
+
+
+    @swagger_auto_schema(
+        operation_description="Get start/end frame for a unique object and check if a frame lies inside the range.",
+        manual_parameters=[
+            openapi.Parameter(
+                "frame", openapi.IN_QUERY, type=openapi.TYPE_INTEGER,
+                required=True, description="Frame number to check"
+            )
+        ],
+        responses={200: "Object details", 400: "Validation error", 404: "Not Found", 500: "Server Error"}
+    )
+    @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
+    def get_unique_id_details(self, request, pk=None, object_id=None):
+        """
+        GET /api/v1/videos/{project_id}/unique-ids/{object_id}/?frame=NUM
+        """
+        try:
+            frame_value = request.query_params.get("frame")
+
+            if frame_value in (None, "", "null"):
+                return JsonResponse(
+                    {"frame": ["Frame query parameter is required."]}, status=400
+                )
+
+            serializer = ObjectTrackDetailsSerializer(
+                data={"object_id": object_id, "frame": frame_value},
+                context={"project_id": pk},
+            )
+            serializer.is_valid(raise_exception=True)
+
+            payload = serializer.get_object_data()
+            return JsonResponse(payload, status=200)
+
+        except serializers.ValidationError as ve:
+            return JsonResponse({"validation_error": ve.detail}, status=400)
+
+        except ObjectTrack.DoesNotExist:
+            return JsonResponse({"error": "Object not found"}, status=404)
+
+        except Exception as e:
+            logger.error(f"Error: {str(e)}", exc_info=True)
+            return JsonResponse({"error": "Server Error", "detail": str(e)}, status=500)
+
     
+    @swagger_auto_schema(
+    method="put",
+    operation_description="Merge object_2 into object_1.",
+    request_body=LinkObjectSerializer,
+    responses={200: "Objects merged successfully"}
+    )
+    @action(detail=True, methods=["put"], url_path="link-objects")
+    def link_objects(self, request, pk=None):
+        """
+        PUT /api/v1/videos/{video_id}/link-objects/
+        """
+        try:
+            serializer = LinkObjectSerializer(
+                data=request.data,
+                context={"video_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+
+            payload = serializer.merge_data()
+            return JsonResponse(payload)
+
+        except Exception as e:
+            logger.error(f"Error linking objects: {str(e)}", exc_info=True)
+            return JsonResponse({"error": str(e)}, status=500)
+
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
+        request_body=ActivityLogSerializer,
+        responses={201: "Activity logged successfully", 400: "Validation error", 500: "Internal server error"}
+    )
+    @action(detail=True, methods=["post"], url_path="add-activity-log")
+    def add_activity_log(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/add-activity-log/
+        """
+        try:
+            # Clone request data so we can modify it
+            data = request.data.copy()
+            data["project_id"] = pk
+
+            serializer = ActivityLogSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Activity log entry created",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except serializers.ValidationError as ve:
+            # DRF validation error -> return friendly error message
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,   # precise field errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception as e:
+            # Unexpected system-level error (DB, code bug, etc.)
+            logger.error(f"Error creating activity log: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while creating the activity log.",
+                    "errors": str(e)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @swagger_auto_schema(
+        operation_description="Get all activity logs related to a video using video ID.",
+        manual_parameters=[
+            openapi.Parameter('video_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description='Video ID'),
+        ],
+        responses={200: "List of activity logs", 400: "Validation error", 404: "Video not found", 500: "Server error"},
+        pagination_class=None
+    )
+    @action(detail=False, methods=['get'], url_path='activity/logs')
+    def get_activity_logs(self, request):
+        """
+        GET /api/v1/videos/activity/logs?video_id=ID 
+        """
+        try:
+            serializer = ActivityLogRequestSerializer(data=request.query_params)
+
+            # VALIDATION FAILS
+            if not serializer.is_valid():
+                return JsonResponse(
+                    {"error": serializer.errors},
+                    status=400
+                )
+
+            # FETCH DATA (Serializer handles database logic)
+            payload = serializer.get_data()
+
+            # If serializer returns empty projects or logs
+            if payload.get("total_logs", 0) == 0:
+                return JsonResponse(
+                    {
+                        "message": "No activity logs found for this video_id",
+                        "video_id": payload.get("video_id")
+                    },
+                    status=404
+                )
+
+            return JsonResponse(payload, safe=False, status=200)
+
+        except Project.DoesNotExist:
+            return JsonResponse(  
+                {"error": "Video or associated project not found"},
+                status=404
+            )
+
+        except Exception as e:
+            # LOG THIS (for debugging)
+            print("ERROR in get_activity_logs:", str(e))
+
+            return JsonResponse(
+                {"error": "An unexpected error occurred", "details": str(e)},
+                status=500
+            )
+
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description=(
+            "Break an object track into two at a given frame. "
+            "The original object is split into two active objects. "
+            "All operations are performed atomically."
+        ),
+        request_body=BreakObjectSerializer,
+        responses={
+            200: "Object break operation completed successfully",
+            400: "Validation error",
+            500: "Internal server error",
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="objects/break")
+    def break_object(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/objects/break/
+        """
+        try:
+            serializer = BreakObjectSerializer(
+                data=request.data,
+                context={"project_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.save()
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Object break operation completed successfully",
+                    "data": result,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            logger.error(f"Error during break operation: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while breaking the object.",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @swagger_auto_schema(
+        method="put",
+        operation_description="Swap object_1 with object_2 inside VideoData and ObjectTrack.",
+        request_body=SwapObjectSerializer,
+        responses={200: "Swap successful", 400: "Validation error"}
+    )
+    @action(detail=True, methods=["put"], url_path="swap-objects")
+    def swap_objects(self, request, pk=None):
+        try:
+            serializer = SwapObjectSerializer(
+                data=request.data,
+                context={"video_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.swap_data()
+            return JsonResponse(result, status=200)
+
+        except serializers.ValidationError as ve:
+            return JsonResponse({"validation_error": ve.detail}, status=400)
+
+        except Exception as e:
+            logger.error(f"Swap Error: {str(e)}")
+            return JsonResponse({"error": "Swap failed", "details": str(e)}, status=500)
+
+
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Delete (nullify) an active object from video_data within a given frame range. Operation is allowed only if the object is active.",
+        request_body=DeleteObjectSerializer,
+        responses={200: "Object delete operation completed successfully", 400: "Validation error", 500: "Internal server error"},
+    )
+    @action(detail=True, methods=["post"], url_path="objects/delete")
+    def delete_object(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/objects/delete/
+        """
+        try:
+            serializer = DeleteObjectSerializer(
+                data=request.data,
+                context={"project_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.save()
+
+            return Response({"status": "success", "message": "Object deleted successfully", "data": result,}, status=status.HTTP_200_OK,)
+
+        except serializers.ValidationError as ve:
+            return Response({"status": "error", "message": "Delete operation not allowed", "errors": ve.detail,}, status=status.HTTP_400_BAD_REQUEST,)
+
+        except Exception as e:
+            logger.error(f"Error during delete object operation: {str(e)}", exc_info=True)
+            return Response({"status": "error", "message": "Something went wrong while deleting the object", "errors": str(e),}, status=status.HTTP_500_INTERNAL_SERVER_ERROR,)
