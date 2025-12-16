@@ -4,7 +4,7 @@ import base64
 import cv2
 import math
 import numpy as np
-from django.http import FileResponse, HttpResponse, JsonResponse
+from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
 from django.conf import settings
@@ -381,7 +381,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             pk (int): Video identifier.
 
         Returns:
-            JsonResponse: Object-wise tracking data for the requested frame range.
+            Response: Object-wise tracking data for the requested frame range.
         """
         try:
             data = request.query_params.copy()
@@ -504,7 +504,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 `frame` query parameters.
 
         Returns:
-            JsonResponse: Tracking data for the resolved frame.
+            Response: Tracking data for the resolved frame.
         """
         try:
             serializer = FrameInfoSerializer(data=request.query_params)
@@ -637,7 +637,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         Args:
             request (Request): Incoming HTTP request with multipart form data.
         Returns:
-            JsonResponse: Upload result including project ID and number of
+            Response: Upload result including project ID and number of
             inserted tracking rows.
         """
         try:
@@ -757,22 +757,23 @@ class VideoViewSet(viewsets.ModelViewSet):
             video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
 
             if not project.video_name:
-                return JsonResponse(
-                    {
-                        "status": "error",
-                        "message": "Video filename missing in project",
-                    },
-                    status=404,
-                )
+                return Response(
+                {
+                    "status": "error", 
+                    "message": "Video filename missing in project"
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
             file_path = os.path.join(video_folder, project.video_name)
 
             if not os.path.exists(file_path):
-                return JsonResponse(
+                return Response(
                     {
-                        "status": "error",
-                        "message": "Video file not found on server",
+                        "status": "error", 
+                        "message": "Video file not found on server"
                     },
-                    status=404,
+                    status=status.HTTP_404_NOT_FOUND,
                 )
 
             range_header = request.headers.get('Range')
@@ -790,13 +791,14 @@ class VideoViewSet(viewsets.ModelViewSet):
             
         except Exception:
             logger.error("Error streaming video file", exc_info=True)
-            return JsonResponse(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while streaming the video",
-                },
-                status=500,
-            )
+            return Response(
+            {
+                "status": "error", 
+                "message": "Something went wrong while streaming the video"
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
 
     @swagger_auto_schema(
         operation_description="Stream/download the raw TRK file content for the project.",
@@ -825,24 +827,24 @@ class VideoViewSet(viewsets.ModelViewSet):
             project = get_object_or_404(Project, pk=pk)
 
             if not project.trk_file_name:
-                return JsonResponse(
+                return Response(
                     {
                         "status": "error",
                         "message": "TRK file not uploaded for this project",
                     },
-                    status=404,
+                    status=status.HTTP_404_NOT_FOUND,
                 )
 
             track_folder = os.path.join(settings.MEDIA_ROOT, "track_folder")
             trk_path = os.path.join(track_folder, project.trk_file_name)
 
             if not os.path.exists(trk_path):
-                return JsonResponse(
+                return Response(
                     {
                         "status": "error",
                         "message": "TRK file not found on server",
                     },
-                    status=404,
+                    status=status.HTTP_404_NOT_FOUND,
                 )
             
             response = FileResponse(
@@ -855,14 +857,14 @@ class VideoViewSet(viewsets.ModelViewSet):
             return response
 
         except Exception:
-                logger.error("Error streaming TRK file", exc_info=True)
-                return JsonResponse(
-                    {
-                        "status": "error",
-                        "message": "Something went wrong while streaming the TRK file",
-                    },
-                    status=500,
-                )
+            logger.error("Error streaming TRK file", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while streaming the TRK file",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
     
 
     @swagger_auto_schema(
@@ -886,7 +888,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             request (Request): Incoming HTTP request.
             pk (int): Project identifier.
         Returns:
-            JsonResponse: List of unique object IDs.
+            Response: List of unique object IDs.
         """
         try:
             serializer = ListUniqueIdsSerializer(
@@ -1158,32 +1160,32 @@ class VideoViewSet(viewsets.ModelViewSet):
 
             payload = serializer.get_data()
 
-            return JsonResponse(
+            return Response(
                 {
                     "status": "success",
                     "data": payload
                 },
-                status=200
+                status=status.HTTP_200_OK
             )
 
         except serializers.ValidationError as ve:
-            return JsonResponse(
+            return Response(
                 {
                     "status": "error",
                     "message": "Invalid query parameters",
                     "errors": ve.detail,
                 },
-                status=400
+                status=status.HTTP_400_BAD_REQUEST
             )
 
         except Exception as e:
             logger.error("Error fetching activity logs", exc_info=True)
-            return JsonResponse(
+            return Response(
                 {
                     "status": "error",
                     "message": "An unexpected error occurred while fetching activity logs",
                 },
-                status=500
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
