@@ -424,9 +424,9 @@ class FrameObjectRangeSerializer(serializers.Serializer):
                     objects_map[obj_id]["frames"].append({
                         "frame_id": f_id,
                         "coordinates": coords,
-                        "confidence": confs[idx] if idx < len(confs) else None,
-                        "tag": tags[idx] if idx < len(tags) else None,
-                        "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+                        # "confidence": confs[idx] if idx < len(confs) else None,
+                        # "tag": tags[idx] if idx < len(tags) else None,
+                        # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
                     })
 
         return {
