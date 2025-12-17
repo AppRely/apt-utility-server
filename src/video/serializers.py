@@ -18,6 +18,8 @@ from rest_framework import serializers
 from django.db.models import Q
 from .services.object_slot_adapter import ObjectSlotAdapter
 from .services.object_lifecycle_service import ObjectLifecycleService
+from .services.frame_object_range_service import FrameObjectRangeService
+from .services.frame_info_service import FrameInfoService 
 from .models import Project, VideoData, ObjectTrack
 
 
@@ -358,12 +360,9 @@ class FrameObjectRangeSerializer(serializers.Serializer):
         video_id = attrs.get('video_id')
 
         # Validate that frame numbers are non-negative
-        if start < 0:
+        if start < 0 or end < 0:
             raise serializers.ValidationError({"start": "Start frame number must be non-negative"})
         
-        if end < 0:
-            raise serializers.ValidationError({"end": "End frame number must be non-negative"})
-
         # Validate start <= end
         if start > end:
             raise serializers.ValidationError({"start": "start must be <= end"})
@@ -372,75 +371,87 @@ class FrameObjectRangeSerializer(serializers.Serializer):
         if end - start + 1 > 900:
             raise serializers.ValidationError({"end": "range cannot exceed 900 frames"})
 
-        # Check if video exists in Project table
+        # # Check if video exists in Project table
+        # if not Project.objects.filter(project_id=video_id).exists():
+        #     raise serializers.ValidationError({"video_id": f"Video with ID {video_id} does not exist"})
+
+        # # Check if start frame exists in VideoData table
+        # if not VideoData.objects.filter(video_id=video_id, frame_no=start).exists():
+        #     raise serializers.ValidationError({"start": f"Start frame {start} not found for video {video_id}"})
+
+        # # Check if end frame exists in VideoData table
+        # if not VideoData.objects.filter(video_id=video_id, frame_no=end).exists():
+        #     raise serializers.ValidationError({"end": f"End frame {end} not found for video {video_id}"})
+        
         if not Project.objects.filter(project_id=video_id).exists():
-            raise serializers.ValidationError({"video_id": f"Video with ID {video_id} does not exist"})
+            raise serializers.ValidationError({"video_id": "Invalid video_id"})
 
-        # Check if start frame exists in VideoData table
-        if not VideoData.objects.filter(video_id=video_id, frame_no=start).exists():
-            raise serializers.ValidationError({"start": f"Start frame {start} not found for video {video_id}"})
-
-        # Check if end frame exists in VideoData table
-        if not VideoData.objects.filter(video_id=video_id, frame_no=end).exists():
-            raise serializers.ValidationError({"end": f"End frame {end} not found for video {video_id}"})
-            
         return attrs
 
     def get_data(self):
-        validated_data = self.validated_data
-        start_frame = validated_data['start']
-        end_frame = validated_data['end']
-        video_id = validated_data['video_id']
+        # validated_data = self.validated_data
+        # start_frame = validated_data['start']
+        # end_frame = validated_data['end']
+        # video_id = validated_data['video_id']
 
-        # Query DB
-        qs = VideoData.objects.filter(
-            video_id=video_id, 
-            frame_no__gte=start_frame, 
-            frame_no__lte=end_frame
-        ).order_by('frame_no')
+        # # Query DB
+        # qs = VideoData.objects.filter(
+        #     video_id=video_id, 
+        #     frame_no__gte=start_frame, 
+        #     frame_no__lte=end_frame
+        # ).order_by('frame_no')
 
-        # Include fallback frames from view if present
-        if hasattr(self, "extra_frames"):
-            qs = qs | VideoData.objects.filter(
-                video_id=video_id,
-                frame_no__in=self.extra_frames
-            )
-            qs = qs.order_by("frame_no")
+        # # Include fallback frames from view if present
+        # if hasattr(self, "extra_frames"):
+        #     qs = qs | VideoData.objects.filter(
+        #         video_id=video_id,
+        #         frame_no__in=self.extra_frames
+        #     )
+        #     qs = qs.order_by("frame_no")
 
-        # Aggregate by object
-        objects_map = {}
+        # # Aggregate by object
+        # objects_map = {}
 
-        for row in qs:
-            f_id = row.frame_no
-            confs = row.confidence if row.confidence else []
-            tags = row.tag if row.tag else []
-            timestamps = row.timestamp if row.timestamp else []
+        # for row in qs:
+        #     f_id = row.frame_no
+        #     confs = row.confidence if row.confidence else []
+        #     tags = row.tag if row.tag else []
+        #     timestamps = row.timestamp if row.timestamp else []
 
-            for i in range(1, 11):
-                obj_id = getattr(row, f'object_{i}_id')
-                coords = getattr(row, f'object_{i}_coordinates')
+        #     for i in range(1, 11):
+        #         obj_id = getattr(row, f'object_{i}_id')
+        #         coords = getattr(row, f'object_{i}_coordinates')
                         
-                if obj_id is not None:
-                    idx = i - 1
-                    if obj_id not in objects_map:
-                        objects_map[obj_id] = {
-                            "object_id": obj_id,
-                            "frames": []
-                        }
+        #         if obj_id is not None:
+        #             idx = i - 1
+        #             if obj_id not in objects_map:
+        #                 objects_map[obj_id] = {
+        #                     "object_id": obj_id,
+        #                     "frames": []
+        #                 }
                     
-                    objects_map[obj_id]["frames"].append({
-                        "frame_id": f_id,
-                        "coordinates": coords,
-                        # "confidence": confs[idx] if idx < len(confs) else None,
-                        # "tag": tags[idx] if idx < len(tags) else None,
-                        # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
-                    })
+        #             objects_map[obj_id]["frames"].append({
+        #                 "frame_id": f_id,
+        #                 "coordinates": coords,
+        #                 # "confidence": confs[idx] if idx < len(confs) else None,
+        #                 # "tag": tags[idx] if idx < len(tags) else None,
+        #                 # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+        #             })
+
+        data = self.validated_data
+
+        objects = FrameObjectRangeService.fetch(
+            video_id=data["video_id"],
+            start_frame=data["start"],
+            end_frame=data["end"],
+            extra_frames=getattr(self, "extra_frames", None)
+        )
 
         return {
-            "video_id": video_id,
-            "start_frame": start_frame,
-            "end_frame": end_frame,
-            "objects": list(objects_map.values()),
+            "video_id": data["video_id"],
+            "start_frame": data["start"],
+            "end_frame": data["end"],
+            "objects": objects,
         }
 
 
@@ -474,49 +485,55 @@ class FrameInfoSerializer(serializers.Serializer):
         """
         Fetch frame data from the database and return structured response.
         """
-        validated_data = self.validated_data
-        video_id = validated_data['video']
-        frame_num = validated_data['frame']
+        # validated_data = self.validated_data
+        # video_id = validated_data['video']
+        # frame_num = validated_data['frame']
 
-        # Query the database for the specific frame (already validated to exist)
-        frame_data = VideoData.objects.get(video_id=video_id, frame_no=frame_num)
+        # # Query the database for the specific frame (already validated to exist)
+        # frame_data = VideoData.objects.get(video_id=video_id, frame_no=frame_num)
 
-        # Extract frame-level data
-        confs = frame_data.confidence if frame_data.confidence else []
-        tags = frame_data.tag if frame_data.tag else []
-        timestamps = frame_data.timestamp if frame_data.timestamp else []
+        # # Extract frame-level data
+        # confs = frame_data.confidence if frame_data.confidence else []
+        # tags = frame_data.tag if frame_data.tag else []
+        # timestamps = frame_data.timestamp if frame_data.timestamp else []
 
-        # Build objects list
-        objects = []
-        for i in range(1, 11):  # 10 object slots
-            obj_id = getattr(frame_data, f'object_{i}_id')
-            coords = getattr(frame_data, f'object_{i}_coordinates')
+        # # Build objects list
+        # objects = []
+        # for i in range(1, 11):  # 10 object slots
+        #     obj_id = getattr(frame_data, f'object_{i}_id')
+        #     coords = getattr(frame_data, f'object_{i}_coordinates')
             
             
-            if obj_id is not None:
-                track = ObjectTrack.objects.filter(
-                project_id_id=video_id,
-                object_id=obj_id
-            ).first()
+        #     if obj_id is not None:
+        #         track = ObjectTrack.objects.filter(
+        #         project_id_id=video_id,
+        #         object_id=obj_id
+        #     ).first()
 
-                objects.append({
-                    "object_id": obj_id,
-                    "coordinates": coords,
-                    "start_frame": track.start_frame if track else None,
-                    "end_frame": track.end_frame if track else None,
-                    # "confidence": confs[idx] if idx < len(confs) else None,
-                    # "tag": tags[idx] if idx < len(tags) else None,
-                    # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
-                    })
+        #         objects.append({
+        #             "object_id": obj_id,
+        #             "coordinates": coords,
+        #             "start_frame": track.start_frame if track else None,
+        #             "end_frame": track.end_frame if track else None,
+        #             # "confidence": confs[idx] if idx < len(confs) else None,
+        #             # "tag": tags[idx] if idx < len(tags) else None,
+        #             # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+        #             })
 
+        data = self.validated_data
+
+        return FrameInfoService.fetch(
+            video_id=data["video"],
+            frame_no=data["frame"],
+        )
         # Return structured response
-        return {
-            "video_id": video_id,
-            "frame_number": frame_num,
-            # "frame_timestamp": frame_data.frame_timestamp,
-            # "trk_timestamp": frame_data.trk_timestamp,
-            "objects": objects,
-        }
+        # return {
+        #     "video_id": data["video"],
+        #     "frame_number": data["frame"],
+        #     # "frame_timestamp": frame_data.frame_timestamp,
+        #     # "trk_timestamp": frame_data.trk_timestamp,
+        #     # "objects": objects,
+        # }
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -577,6 +594,10 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
         if not Project.objects.filter(project_id=project_id).exists():
             raise serializers.ValidationError({"project_id": "Invalid project ID"})
 
+        # Validate frame >= 0
+        if frame < 0:
+            raise serializers.ValidationError({"frame": "Frame must be >= 0"})
+
         # Validate object exists
         obj = ObjectTrack.objects.filter(project_id_id=project_id, object_id=obj_id).first()
         if not obj:
@@ -587,52 +608,52 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
         # pass object row to next method
         data["object_row"] = obj
 
-
-        # Validate frame >= 0
-        if frame < 0:
-            raise serializers.ValidationError({"frame": "Frame must be >= 0"})
-
         return data
 
     def get_object_data(self):
-        project_id = self.context.get("project_id")
-        obj_id = self.validated_data["object_id"]
-        frame = self.validated_data["frame"]
+        # project_id = self.context.get("project_id")
+        # obj_id = self.validated_data["object_id"]
+        # frame = self.validated_data["frame"]
 
-        row = self.validated_data.get("object_row")
+        # row = self.validated_data.get("object_row")
 
-        # Case 1 — Object doesn't exist
-        if self.validated_data.get("object_missing"):
-            return {
-                "project_id": project_id,
-                "object_id": obj_id,
-                "message": "Object ID not found in database",
-                "is_active": False
-            }
+        # # Case 1 — Object doesn't exist
+        # if self.validated_data.get("object_missing"):
+        #     return {
+        #         "project_id": project_id,
+        #         "object_id": obj_id,
+        #         "message": "Object ID not found in database",
+        #         "is_active": False
+        #     }
 
-        # Case 2 — Object exists but inactive
-        if row.object_status == 0:
-            return {
-                "project_id": project_id,
-                "object_id": obj_id,
-                "message": "Object is inactive",
-                "is_active": False,
-                "operation_note": row.operation_note
-            }
+        # # Case 2 — Object exists but inactive
+        # if row.object_status == 0:
+        #     return {
+        #         "project_id": project_id,
+        #         "object_id": obj_id,
+        #         "message": "Object is inactive",
+        #         "is_active": False,
+        #         "operation_note": row.operation_note
+        #     }
 
-        # Case 3 — Active: normal logic
-        is_inside = row.start_frame <= frame <= row.end_frame
+        # # Case 3 — Active: normal logic
+        # is_inside = row.start_frame <= frame <= row.end_frame
 
 
-        return {
-            "project_id": project_id,
-            "object_id": obj_id,
-            "start_frame": row.start_frame,
-            "end_frame": row.end_frame,
-            "is_inside": is_inside,
-            "object_status": row.object_status,
-            "operation_note": row.operation_note,
-        }
+        # return {
+        #     "project_id": project_id,
+        #     "object_id": obj_id,
+        #     "start_frame": row.start_frame,
+        #     "end_frame": row.end_frame,
+        #     "is_inside": is_inside,
+        #     "object_status": row.object_status,
+        #     "operation_note": row.operation_note,
+        # }
+        return ObjectLifecycleService.fetch(
+            project_id=self.context["project_id"],
+            object_id=self.validated_data["object_id"],
+            frame=self.validated_data["frame"],
+        )
 
 
 class ActivityLogSerializer(serializers.Serializer):
@@ -1104,111 +1125,88 @@ class SwapObjectSerializer(serializers.Serializer):
 
         SENTINEL = -99999999
 
-        # union range
-        min_frame = min(s1, s2)
-        max_frame = max(e1, e2)
+        object_fields = ObjectSlotAdapter.get_object_id_fields()
 
-        qs = VideoData.objects.filter(
+        qs1 = VideoData.objects.filter(
             video_id=video_id,
-            frame_no__gte=min_frame,
-            frame_no__lte=max_frame
+            frame_no__gte=s1,
+            frame_no__lte=e1,
         )
 
-        # object_fields = self._get_object_id_fields()
+        qs2 = VideoData.objects.filter(
+            video_id=video_id,
+            frame_no__gte=s2,
+            frame_no__lte=e2,
+        )
+
+        qs_all = VideoData.objects.filter(video_id=video_id)
+
+        object_fields = ObjectSlotAdapter.get_object_id_fields()
+
+        affected_q = Q()
+        for field in object_fields:
+            affected_q |= Q(**{field: obj1}) | Q(**{field: obj2})
+
+        affected_frames = qs_all.filter(affected_q).count()
 
 
         with transaction.atomic():
 
-            # # 1️⃣ object_1 → SENTINEL
-            # qs.update(**{
-            #     field: Case(
-            #         When(
-            #             **{
-            #                 field: obj1,
-            #                 "frame_no__gte": s1,
-            #                 "frame_no__lte": e1
-            #             },
-            #             then=Value(SENTINEL)
-            #         ),
-            #         default=field,
-            #         output_field=IntegerField()
-            #     )
-            #     for field in object_fields
-            # })
+            
+            # 1️⃣ obj1 → SENTINEL
+            qs1.update(**{
+                field: Case(
+                    When(**{field: obj1}, then=Value(SENTINEL)),
+                    default=field,
+                    output_field=IntegerField(),
+                )
+                for field in object_fields
+            })
 
-            # # 2️⃣ object_2 → object_1
-            # qs.update(**{
-            #     field: Case(
-            #         When(
-            #             **{
-            #                 field: obj2,
-            #                 "frame_no__gte": s2,
-            #                 "frame_no__lte": e2
-            #             },
-            #             then=Value(obj1)
-            #         ),
-            #         default=field,
-            #         output_field=IntegerField()
-            #     )
-            #     for field in object_fields
-            # })
+            # 2️⃣ obj2 → obj1
+            qs2.update(**{
+                field: Case(
+                    When(**{field: obj2}, then=Value(obj1)),
+                    default=field,
+                    output_field=IntegerField(),
+                )
+                for field in object_fields
+            })
 
-            # # 3️⃣ SENTINEL → object_2
-            # rows_updated = qs.update(**{
-            #     field: Case(
-            #         When(**{field: SENTINEL}, then=Value(obj2)),
-            #         default=field,
-            #         output_field=IntegerField()
-            #     )
-            #     for field in object_fields
-            # })
+            # 3️⃣ SENTINEL → obj2
+            rows_updated = qs_all.update(**{
+                field: Case(
+                    When(**{field: SENTINEL}, then=Value(obj2)),
+                    default=field,
+                    output_field=IntegerField(),
+                )
+                for field in object_fields
+            })
 
-            update_map = ObjectSlotAdapter.build_bulk_swap_map(
-                obj1=obj1,
-                obj2=obj2,
-                sentinel=SENTINEL,
-                s1=s1,
-                e1=e1,
-                s2=s2,
-                e2=e2,
-            )
-
-            rows_updated = qs.update(**update_map)
-
-            # 4️⃣ Swap ObjectTrack IDs
-            # obj1_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj1)
-            # obj2_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj2)
-
-            # # Use sentinel swap to avoid collision
-            # obj1_row.object_id = SENTINEL
-            # obj1_row.save(update_fields=["object_id"])
-
-            # obj2_row.object_id = obj1
-            # obj2_row.operation_note = f"swap_with_object_{obj1}"
-            # obj2_row.save(update_fields=["object_id", "operation_note"])
-
-            # obj1_row.object_id = obj2
-            # obj1_row.operation_note = f"swap_with_object_{obj2}"
-            # obj1_row.save(update_fields=["object_id", "operation_note"])
-
+            # 4️⃣ Swap ObjectTrack IDs SAFELY
             obj1_row = ObjectLifecycleService.get_active_object(video_id, obj1)
             obj2_row = ObjectLifecycleService.get_active_object(video_id, obj2)
 
-            ObjectLifecycleService.swap_objects(
-                obj1=obj1_row,
-                obj2=obj2_row,
-                sentinel=SENTINEL
-            )
+            original_obj1 = obj1_row.object_id
+            original_obj2 = obj2_row.object_id
 
+            obj1_row.object_id = SENTINEL
+            obj1_row.save(update_fields=["object_id"])
 
-            obj1_row.refresh_from_db()
-            obj2_row.refresh_from_db()
+            obj2_row.object_id = original_obj1
+            obj2_row.operation_note = f"swap_with_object_{original_obj1}"
+            obj2_row.save(update_fields=["object_id", "operation_note"])
+
+            obj1_row.object_id = original_obj2
+            obj1_row.operation_note = f"swap_with_object_{original_obj2}"
+            obj1_row.save(update_fields=["object_id", "operation_note"])
+
 
         return {
             "status": "success",
             "message": "Objects swapped successfully",
             "video_id": video_id,
-            "rows_updated": rows_updated,
+            "rows_updated": affected_frames,
             "object_track_object_1": {
                 "original_object_id": obj1,
                 "current_object_id": obj1_row.object_id,

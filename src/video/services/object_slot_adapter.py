@@ -20,6 +20,37 @@ class ObjectSlotAdapter:
             if field.name.startswith("object_") and field.name.endswith("_id")
         ]
 
+    @staticmethod
+    def iter_object_slots(row):
+        """
+        Yield (object_id, coordinates) pairs for a VideoData row.
+        """
+        for field in ObjectSlotAdapter.get_object_id_fields():
+            obj_id = getattr(row, field)
+            if obj_id is None:
+                continue
+            coord_field = field.replace("_id", "_coordinates")
+            yield obj_id, getattr(row, coord_field)
+
+    @classmethod
+    def get_object_fields(cls):
+        """
+        Returns:
+        [
+        ("object_1_id", "object_1_coordinates"),
+        ("object_2_id", "object_2_coordinates"),
+        ...
+        ]
+        """
+        fields = []
+        for field in VideoData._meta.fields:
+            if field.name.startswith("object_") and field.name.endswith("_id"):
+                idx = field.name.split("_")[1]
+                fields.append(
+                    (field.name, f"object_{idx}_coordinates")
+                )
+        return fields
+
     @classmethod
     def build_bulk_nullify_map(cls, object_id: int):
         """
@@ -42,6 +73,8 @@ class ObjectSlotAdapter:
             )
 
         return update_map
+
+
 
 
     @classmethod
