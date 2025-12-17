@@ -12,6 +12,13 @@ from django.db.models import Max
 
 from .models import Project, Video, VideoData, ObjectTrack, ActivityLog
 from .TrkFile import Trk
+from django.db import transaction
+from django.db.models import Case, When, Value, IntegerField
+from rest_framework import serializers
+from django.db.models import Q
+from .services.object_slot_adapter import ObjectSlotAdapter
+from .services.object_lifecycle_service import ObjectLifecycleService
+from .models import Project, VideoData, ObjectTrack
 
 
 class VideoSerializer(serializers.ModelSerializer):
@@ -628,98 +635,6 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
         }
 
 
-class LinkObjectSerializer(serializers.Serializer):
-    object_1_id = serializers.IntegerField(required=True)
-    object_1_start = serializers.IntegerField(required=True)
-    object_1_end = serializers.IntegerField(required=True)
-
-    object_2_id = serializers.IntegerField(required=True)
-    object_2_start = serializers.IntegerField(required=True)
-    object_2_end = serializers.IntegerField(required=True)
-
-    def validate(self, data):
-        video_id = self.context.get("video_id")
-
-        if not Project.objects.filter(project_id=video_id).exists():
-            raise serializers.ValidationError({"video_id": "Invalid Video ID"})
-
-        if data["object_1_id"] == data["object_2_id"]:
-            raise serializers.ValidationError("Object IDs cannot be the same.")
-
-        return data
-
-    def merge_data(self):
-        """
-        Merge object_2 into object_1:
-        - In VideoData: replace object_2_id with object_1_id in the given frame range.
-        - In ObjectTrack: extend object_1 range, mark object_2 as inactive with a 'link' note.
-        """
-        data = self.validated_data
-        project_id = self.context.get("video_id")
-
-        obj1 = data["object_1_id"]
-        obj2 = data["object_2_id"]
-        start2 = data["object_2_start"]
-        end2 = data["object_2_end"]
-
-        # 1) Update main table (video_data)
-        rows = VideoData.objects.filter(
-            video_id=project_id,
-            frame_no__gte=start2,
-            frame_no__lte=end2
-        )
-
-        rows_updated = 0
-        for row in rows:
-            changed = False
-            for i in range(1, 10 + 1):
-                field = f"object_{i}_id"
-                if getattr(row, field) == obj2:
-                    setattr(row, field, obj1)
-                    changed = True
-            if changed:
-                row.save()
-                rows_updated += 1
-
-        # 2) Update object_track table (no delete now)
-        obj1_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj1)
-        obj2_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj2)
-
-        # Extend obj1 range
-        obj1_row.start_frame = min(obj1_row.start_frame, obj2_row.start_frame)
-        obj1_row.end_frame = max(obj1_row.end_frame, obj2_row.end_frame)
-        obj1_row.object_status = 1  # keep active
-        # Optional: note that it has absorbed another object
-        obj1_row.operation_note = "link_target"  # or "merged_from_object_2"
-        obj1_row.save()
-
-        # Mark obj2 as inactive + note
-        obj2_row.object_status = 0  # inactive
-        obj2_row.operation_note = f"linked_into_object_{obj1}"
-        obj2_row.save()
-
-        return {
-            "status": "success",
-            "message": "Objects merged successfully",
-            "video_id": project_id,
-            "rows_updated_main_table": rows_updated,
-            "object_track_object_1": {
-                "object_id": obj1,
-                "start_frame": obj1_row.start_frame,
-                "end_frame": obj1_row.end_frame,
-                "object_status": obj1_row.object_status,
-                "operation_note": obj1_row.operation_note,
-            },
-            "object_track_object_2": {
-                "object_id": obj2,
-                "start_frame": obj2_row.start_frame,
-                "end_frame": obj2_row.end_frame,
-                "object_status": obj2_row.object_status,
-                "operation_note": obj2_row.operation_note,
-            },
-        }
-
-
 class ActivityLogSerializer(serializers.Serializer):
 
     project_id = serializers.IntegerField(required=True)
@@ -837,6 +752,128 @@ class ActivityLogRequestSerializer(serializers.Serializer):
         }
 
 
+class LinkObjectSerializer(serializers.Serializer):
+    object_1_id = serializers.IntegerField(required=True)
+    object_1_start = serializers.IntegerField(required=True)
+    object_1_end = serializers.IntegerField(required=True)
+
+    object_2_id = serializers.IntegerField(required=True)
+    object_2_start = serializers.IntegerField(required=True)
+    object_2_end = serializers.IntegerField(required=True)
+
+    def validate(self, data):
+        video_id = self.context.get("video_id")
+
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video_id": "Invalid Video ID"})
+
+        if data["object_1_id"] == data["object_2_id"]:
+            raise serializers.ValidationError("Object IDs cannot be the same.")
+
+        return data
+
+    # @staticmethod
+    # def _get_object_id_fields():
+    #     return [
+    #         field.name
+    #         for field in VideoData._meta.fields
+    #         if field.name.startswith("object_") and field.name.endswith("_id")
+    #     ]
+
+    def merge_data(self):
+        """
+        Merge object_2 into object_1:
+        - In VideoData: replace object_2_id with object_1_id in the given frame range.
+        - In ObjectTrack: extend object_1 range, mark object_2 as inactive with a 'link' note.
+        """
+        data = self.validated_data
+        project_id = self.context["video_id"]
+
+        obj1 = data["object_1_id"]
+        obj2 = data["object_2_id"]
+        start2 = data["object_2_start"]
+        end2 = data["object_2_end"]
+
+        # object_fields = self._get_object_id_fields()
+
+        qs = VideoData.objects.filter(
+            video_id=project_id,
+            frame_no__gte=start2,
+            frame_no__lte=end2
+        )
+
+        with transaction.atomic():
+            # update_map = {
+            #     field: Case(
+            #         When(**{field: obj2}, then=Value(obj1)),
+            #         default=field,
+            #         output_field=IntegerField()
+            #     )
+            #     for field in object_fields
+            # }
+
+            # rows_updated = qs.update(**update_map)
+
+            # obj1_row = ObjectTrack.objects.get(
+            #     project_id_id=project_id,
+            #     object_id=obj1
+            # )
+            # obj2_row = ObjectTrack.objects.get(
+            #     project_id_id=project_id,
+            #     object_id=obj2
+            # )
+
+            update_map = ObjectSlotAdapter.build_bulk_replace_map(
+                old_object_id=obj2,
+                new_object_id=obj1,
+            )
+
+            rows_updated = qs.update(**update_map)
+
+            obj1_row = ObjectTrack.objects.get(
+                project_id_id=project_id,
+                object_id=obj1
+            )
+            obj2_row = ObjectTrack.objects.get(
+                project_id_id=project_id,
+                object_id=obj2
+            )
+            #Extend object_1 range
+            obj1_row.start_frame = min(obj1_row.start_frame, obj2_row.start_frame)
+            obj1_row.end_frame = max(obj1_row.end_frame, obj2_row.end_frame)
+            obj1_row.object_status = 1
+            obj1_row.operation_note = "link_target"
+            obj1_row.save(update_fields=[
+                "start_frame", "end_frame", "object_status", "operation_note"
+            ])
+
+            # Mark object_2 inactive
+            obj2_row.object_status = 0
+            obj2_row.operation_note = f"linked_into_object_{obj1}"
+            obj2_row.save(update_fields=["object_status", "operation_note"])
+
+        return {
+            "status": "success",
+            "message": "Objects merged successfully",
+            "video_id": project_id,
+            "rows_updated_main_table": rows_updated,
+            "object_track_object_1": {
+                "object_id": obj1,
+                "start_frame": obj1_row.start_frame,
+                "end_frame": obj1_row.end_frame,
+                "object_status": obj1_row.object_status,
+                "operation_note": obj1_row.operation_note,
+            },
+            "object_track_object_2": {
+                "object_id": obj2,
+                "start_frame": obj2_row.start_frame,
+                "end_frame": obj2_row.end_frame,
+                "object_status": obj2_row.object_status,
+                "operation_note": obj2_row.operation_note,
+            },
+        }
+
+
 class BreakObjectSerializer(serializers.Serializer):
     object_id = serializers.IntegerField(required=True)
     break_frame = serializers.IntegerField(required=True)
@@ -867,38 +904,39 @@ class BreakObjectSerializer(serializers.Serializer):
         except ObjectTrack.DoesNotExist:
             raise serializers.ValidationError("Active object not found")
 
-        db_start = obj_track.start_frame
-        db_end = obj_track.end_frame
+        # db_start = obj_track.start_frame
+        # db_end = obj_track.end_frame
 
         # 3️ Break-frame validation
-        if not (db_start < break_frame < db_end):
+        if not (obj_track.start_frame < break_frame < obj_track.end_frame):
             raise serializers.ValidationError(
-                f"break_frame must be between {db_start} and {db_end}"
+                f"break_frame must be between {obj_track.start_frame} and {obj_track.end_frame}"
             )
 
         # 4️ Optional frontend validation
-        if "start_frame" in data and data["start_frame"] != db_start:
+        if "start_frame" in data and data["start_frame"] != obj_track.start_frame:
             raise serializers.ValidationError("start_frame mismatch with DB")
 
-        if "end_frame" in data and data["end_frame"] != db_end:
+        if "end_frame" in data and data["end_frame"] != obj_track.end_frame:
             raise serializers.ValidationError("end_frame mismatch with DB")
 
         # Attach DB info
         data["obj_track"] = obj_track
-        data["db_start"] = db_start
-        data["db_end"] = db_end
+        # data["db_start"] = db_start
+        # data["db_end"] = db_end
 
         return data
 
     # ---------------------------
     # DYNAMIC OBJECT SLOT FETCH
     # ---------------------------
-    def _get_object_id_fields(self):
-        return [
-            field.name
-            for field in VideoData._meta.fields
-            if field.name.startswith("object_") and field.name.endswith("_id")
-        ]
+    # def _get_object_id_fields(self):
+    #     return [
+    #         field.name
+    #         for field in VideoData._meta.fields
+    #         if field.name.startswith("object_") and field.name.endswith("_id")
+    #     ]
+
 
     # ---------------------------
     # CREATE (ALL BREAK LOGIC)
@@ -909,29 +947,29 @@ class BreakObjectSerializer(serializers.Serializer):
         object_id = validated_data["object_id"]
         break_frame = validated_data["break_frame"]
         obj_track = validated_data["obj_track"]
-        start_frame = validated_data["db_start"]
-        end_frame = validated_data["db_end"]
+        start_frame = obj_track.start_frame
+        end_frame = obj_track.end_frame
 
         with transaction.atomic():
 
             # 1️ Generate new object_id
-            max_id = ObjectTrack.objects.filter(
-                project_id_id=project_id
-            ).aggregate(m=Max("object_id"))["m"] or 0
+            # max_id = ObjectTrack.objects.filter(
+            #     project_id_id=project_id
+            # ).aggregate(m=Max("object_id"))["m"] or 0
 
-            new_object_id = max_id + 1
+            # new_object_id = max_id + 1
 
-            # 2️ Find object slot SAFELY (no sample-row bug)
-            object_fields = self._get_object_id_fields()
-            object_slot = None
+            new_object_id = (
+                ObjectTrack.objects
+                .filter(project_id_id=project_id)
+                .aggregate(m=Max("object_id"))["m"] or 0
+            ) + 1
 
-            for field in object_fields:
-                if VideoData.objects.filter(
-                    video_id=project_id,
-                    **{field: object_id}
-                ).exists():
-                    object_slot = field
-                    break
+            # 2️⃣ Find object slot SAFELY (single DB query)
+            object_slot = ObjectSlotAdapter.find_object_slot(
+                project_id=project_id,
+                object_id=object_id
+            )
 
             if not object_slot:
                 raise serializers.ValidationError(
@@ -1006,10 +1044,20 @@ class SwapObjectSerializer(serializers.Serializer):
             raise serializers.ValidationError({"object_2_range": "Invalid range"})
 
         return data
+    
+    # @staticmethod
+    # def _get_object_id_fields():
+    #     return [
+    #         field.name
+    #         for field in VideoData._meta.fields
+    #         if field.name.startswith("object_") and field.name.endswith("_id")
+    #     ]
+
+    
 
     def swap_data(self):
         data = self.validated_data
-        video_id = self.context.get("video_id")
+        video_id = self.context["video_id"]
 
         obj1 = data["object_1_id"]
         obj2 = data["object_2_id"]
@@ -1018,97 +1066,119 @@ class SwapObjectSerializer(serializers.Serializer):
         s2, e2 = data["object_2_start"], data["object_2_end"]
 
         SENTINEL = -99999999
-        rows_updated = 0
 
         # union range
         min_frame = min(s1, s2)
         max_frame = max(e1, e2)
 
+        qs = VideoData.objects.filter(
+            video_id=video_id,
+            frame_no__gte=min_frame,
+            frame_no__lte=max_frame
+        )
+
+        # object_fields = self._get_object_id_fields()
+
+
         with transaction.atomic():
 
-            # UPDATE video table
-            qs = VideoData.objects.filter(
-                video_id=video_id,
-                frame_no__gte=min_frame,
-                frame_no__lte=max_frame
+            # # 1️⃣ object_1 → SENTINEL
+            # qs.update(**{
+            #     field: Case(
+            #         When(
+            #             **{
+            #                 field: obj1,
+            #                 "frame_no__gte": s1,
+            #                 "frame_no__lte": e1
+            #             },
+            #             then=Value(SENTINEL)
+            #         ),
+            #         default=field,
+            #         output_field=IntegerField()
+            #     )
+            #     for field in object_fields
+            # })
+
+            # # 2️⃣ object_2 → object_1
+            # qs.update(**{
+            #     field: Case(
+            #         When(
+            #             **{
+            #                 field: obj2,
+            #                 "frame_no__gte": s2,
+            #                 "frame_no__lte": e2
+            #             },
+            #             then=Value(obj1)
+            #         ),
+            #         default=field,
+            #         output_field=IntegerField()
+            #     )
+            #     for field in object_fields
+            # })
+
+            # # 3️⃣ SENTINEL → object_2
+            # rows_updated = qs.update(**{
+            #     field: Case(
+            #         When(**{field: SENTINEL}, then=Value(obj2)),
+            #         default=field,
+            #         output_field=IntegerField()
+            #     )
+            #     for field in object_fields
+            # })
+
+            update_map = ObjectSlotAdapter.build_bulk_swap_map(
+                obj1=obj1,
+                obj2=obj2,
+                sentinel=SENTINEL,
+                s1=s1,
+                e1=e1,
+                s2=s2,
+                e2=e2,
             )
 
-            for row in qs:
-                changed = False
+            rows_updated = qs.update(**update_map)
 
-                # mark obj1 → SENTINEL (only inside obj1 range)
-                if s1 <= row.frame_no <= e1:
-                    for i in range(1, 11):
-                        field = f"object_{i}_id"
-                        if getattr(row, field) == obj1:
-                            setattr(row, field, SENTINEL)
-                            changed = True
-
-                # obj2 → obj1 (inside obj2 range)
-                if s2 <= row.frame_no <= e2:
-                    for i in range(1, 11):
-                        field = f"object_{i}_id"
-                        if getattr(row, field) == obj2:
-                            setattr(row, field, obj1)
-                            changed = True
-
-                # SENTINEL → obj2
-                for i in range(1, 11):
-                    field = f"object_{i}_id"
-                    if getattr(row, field) == SENTINEL:
-                        setattr(row, field, obj2)
-                        changed = True
-
-                if changed:
-                    row.save()
-                    rows_updated += 1
-
-            # UPDATE object track (swap IDs)
+            # 4️⃣ Swap ObjectTrack IDs
             obj1_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj1)
             obj2_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj2)
 
             # Use sentinel swap to avoid collision
             obj1_row.object_id = SENTINEL
-            obj1_row.operation_note = f"swap_with_objectID_{obj1}"
-            obj1_row.save()
+            obj1_row.save(update_fields=["object_id"])
 
             obj2_row.object_id = obj1
-            obj2_row.operation_note = f"swap_with_objectID_{obj2}"
-            obj2_row.save()
+            obj2_row.operation_note = f"swap_with_object_{obj1}"
+            obj2_row.save(update_fields=["object_id", "operation_note"])
 
             obj1_row.object_id = obj2
-            obj1_row.save()
+            obj1_row.operation_note = f"swap_with_object_{obj2}"
+            obj1_row.save(update_fields=["object_id", "operation_note"])
 
-            # refresh rows after swap
-            obj1_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj2)
-            obj2_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj1)
+            obj1_row.refresh_from_db()
+            obj2_row.refresh_from_db()
 
-
-        # Response summary
         return {
-                "status": "success",
-                "message": "Objects swapped successfully",
-                "video_id": video_id,
-                "rows_updated": rows_updated,
-
-                "object_track_object_1": {
-                    "original_object_id": obj1,
-                    "current_object_id": obj1_row.object_id,
-                    "start_frame": obj1_row.start_frame,
-                    "end_frame": obj1_row.end_frame,
-                    "object_status": obj1_row.object_status,
-                    "operation_note": obj1_row.operation_note,
-                },
-
-                "object_track_object_2": {
-                    "original_object_id": obj2,
-                    "current_object_id": obj2_row.object_id,
-                    "start_frame": obj2_row.start_frame,
-                    "end_frame": obj2_row.end_frame,
-                    "object_status": obj2_row.object_status,
-                    "operation_note": obj2_row.operation_note,
-                }
-            }
+            "status": "success",
+            "message": "Objects swapped successfully",
+            "video_id": video_id,
+            "rows_updated": rows_updated,
+            "object_track_object_1": {
+                "original_object_id": obj1,
+                "current_object_id": obj1_row.object_id,
+                "start_frame": obj1_row.start_frame,
+                "end_frame": obj1_row.end_frame,
+                "object_status": obj1_row.object_status,
+                "operation_note": obj1_row.operation_note,
+            },
+            "object_track_object_2": {
+                "original_object_id": obj2,
+                "current_object_id": obj2_row.object_id,
+                "start_frame": obj2_row.start_frame,
+                "end_frame": obj2_row.end_frame,
+                "object_status": obj2_row.object_status,
+                "operation_note": obj2_row.operation_note,
+            },
+        }
 
 
 
@@ -1151,30 +1221,29 @@ class DeleteObjectSerializer(serializers.Serializer):
                 "Object is already inactive. No delete operation performed."
             )
 
-        db_start = obj_track.start_frame
-        db_end = obj_track.end_frame
-
-        # Ensure delete range is inside lifecycle
-        if start_frame < db_start or end_frame > db_end:
+        # Range must lie inside lifecycle
+        if start_frame < obj_track.start_frame or end_frame > obj_track.end_frame:
             raise serializers.ValidationError(
-                f"Delete range must be between {db_start} and {db_end}"
+                f"Delete range must be between "
+                f"{obj_track.start_frame} and {obj_track.end_frame}"
             )
 
         data["obj_track"] = obj_track
         return data
 
     # ---------------------------
-    # DYNAMIC OBJECT SLOT FETCH
+    # DYNAMIC SLOT DISCOVERY
     # ---------------------------
-    def _get_object_id_fields(self):
-        return [
-            field.name
-            for field in VideoData._meta.fields
-            if field.name.startswith("object_") and field.name.endswith("_id")
-        ]
+    # @staticmethod
+    # def _get_object_id_fields():
+    #     return [
+    #         field.name
+    #         for field in VideoData._meta.fields
+    #         if field.name.startswith("object_") and field.name.endswith("_id")
+    #     ]
 
     # ---------------------------
-    # CREATE (DELETE LOGIC)
+    # CREATE (OPTIMIZED)
     # ---------------------------
     def create(self, validated_data):
         project_id = self.context["project_id"]
@@ -1184,35 +1253,39 @@ class DeleteObjectSerializer(serializers.Serializer):
         end_frame = validated_data["end_frame"]
         obj_track = validated_data["obj_track"]
 
-        affected_frames = 0
+        frames_qs = VideoData.objects.filter(
+            video_id=project_id,
+            frame_no__gte=start_frame,
+            frame_no__lte=end_frame
+        )
+
+        #object_id_fields = self._get_object_id_fields()
+        object_id_fields = ObjectSlotAdapter.get_object_id_fields()
 
         with transaction.atomic():
 
-            object_fields = self._get_object_id_fields()
+            # # BUILD SINGLE BULK UPDATE MAP
+            # update_map = {}
 
-            # Fetch frames in range
-            frames_qs = VideoData.objects.filter(
-                video_id=project_id,
-                frame_no__gte=start_frame,
-                frame_no__lte=end_frame
-            )
+            # for field in object_id_fields:
+            #     coord_field = field.replace("_id", "_coordinates")
 
-            #  Nullify object slots
-            for row in frames_qs:
-                row_updated = False
+            #     update_map[field] = Case(
+            #         When(**{field: object_id}, then=Value(None)),
+            #         default=field,
+            #     )
 
-                for field in object_fields:
-                    if getattr(row, field) == object_id:
-                        coord_field = field.replace("_id", "_coordinates")
-                        setattr(row, field, None)
-                        setattr(row, coord_field, None)
-                        row_updated = True
+            #     update_map[coord_field] = Case(
+            #         When(**{field: object_id}, then=Value(None)),
+            #         default=coord_field,
+            #     )
 
-                if row_updated:
-                    row.save()
-                    affected_frames += 1
+            update_map = ObjectSlotAdapter.build_bulk_nullify_map(object_id)
 
-            # Update ObjectTrack → mark inactive
+            # ONE SQL UPDATE
+            affected_frames = frames_qs.update(**update_map)
+
+            # UPDATE OBJECT TRACK (single row)
             obj_track.object_status = 0
             obj_track.operation_note = (
                 f"deleted_frames_{start_frame}_to_{end_frame}"

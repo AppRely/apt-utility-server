@@ -83,6 +83,11 @@ class VideoData(models.Model):
             models.Index(fields=["video_id", "frame_no"]),
         ]
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["video_id", "frame_no"]),
+        ]
+
     def __str__(self):
         return f"Video {self.video_id} | Frame {self.frame_no}"
 
@@ -105,6 +110,13 @@ class ObjectTrack(models.Model):
         indexes = [
             models.Index(fields=["project_id", "object_id"]),
         ]
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["project_id", "object_id"]),
+            models.Index(fields=["project_id", "object_status"]),
+        ]
+        
     def __str__(self):
         return f"Object {self.object_id} | ProjectID {self.project_id_id}"
 
