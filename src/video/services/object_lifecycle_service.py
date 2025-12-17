@@ -21,3 +21,22 @@ class ObjectLifecycleService:
         obj_track.object_status = 0
         obj_track.operation_note = note
         obj_track.save(update_fields=["object_status", "operation_note"])
+
+    @staticmethod
+    def swap_objects(obj1: ObjectTrack, obj2: ObjectTrack, sentinel: int):
+        obj1_id = obj1.object_id
+        obj2_id = obj2.object_id
+
+        # Step 1: obj1 → sentinel
+        obj1.object_id = sentinel
+        obj1.save(update_fields=["object_id"])
+
+        # Step 2: obj2 → obj1
+        obj2.object_id = obj1_id
+        obj2.operation_note = f"swap_with_object_{obj2_id}"
+        obj2.save(update_fields=["object_id", "operation_note"])
+
+        # Step 3: obj1 → obj2
+        obj1.object_id = obj2_id
+        obj1.operation_note = f"swap_with_object_{obj1_id}"
+        obj1.save(update_fields=["object_id", "operation_note"])

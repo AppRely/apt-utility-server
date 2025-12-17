@@ -761,6 +761,17 @@ class LinkObjectSerializer(serializers.Serializer):
     object_2_start = serializers.IntegerField(required=True)
     object_2_end = serializers.IntegerField(required=True)
 
+    # def validate(self, data):
+    #     video_id = self.context.get("video_id")
+
+    #     if not Project.objects.filter(project_id=video_id).exists():
+    #         raise serializers.ValidationError({"video_id": "Invalid Video ID"})
+
+    #     if data["object_1_id"] == data["object_2_id"]:
+    #         raise serializers.ValidationError("Object IDs cannot be the same.")
+
+    #     return data
+
     def validate(self, data):
         video_id = self.context.get("video_id")
 
@@ -769,6 +780,16 @@ class LinkObjectSerializer(serializers.Serializer):
 
         if data["object_1_id"] == data["object_2_id"]:
             raise serializers.ValidationError("Object IDs cannot be the same.")
+
+        try:
+            ObjectLifecycleService.get_active_object(video_id, data["object_1_id"])
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError({"object_1_id": "Active Object 1 not found"})
+
+        try:
+            ObjectLifecycleService.get_active_object(video_id, data["object_2_id"])
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError({"object_2_id": "Active Object 2 not found"})
 
         return data
 
@@ -848,9 +869,15 @@ class LinkObjectSerializer(serializers.Serializer):
             ])
 
             # Mark object_2 inactive
-            obj2_row.object_status = 0
-            obj2_row.operation_note = f"linked_into_object_{obj1}"
-            obj2_row.save(update_fields=["object_status", "operation_note"])
+            # obj2_row.object_status = 0
+            # obj2_row.operation_note = f"linked_into_object_{obj1}"
+            # obj2_row.save(update_fields=["object_status", "operation_note"])
+
+            ObjectLifecycleService.deactivate_object(
+                obj2_row,
+                note=f"linked_into_object_{obj1}"
+            )
+
 
         return {
             "status": "success",
@@ -896,10 +923,9 @@ class BreakObjectSerializer(serializers.Serializer):
 
         # 2️ Active object validation
         try:
-            obj_track = ObjectTrack.objects.get(
-                project_id_id=project_id,
-                object_id=object_id,
-                object_status=1
+            obj_track = ObjectLifecycleService.get_active_object(
+                project_id=project_id,
+                object_id=object_id
             )
         except ObjectTrack.DoesNotExist:
             raise serializers.ValidationError("Active object not found")
@@ -1031,12 +1057,23 @@ class SwapObjectSerializer(serializers.Serializer):
             raise serializers.ValidationError("Object IDs cannot be the same.")
 
         # Ensure object tracks exist
-        if not ObjectTrack.objects.filter(project_id_id=video_id, object_id=data["object_1_id"]).exists():
-            raise serializers.ValidationError({"object_1_id": "Object 1 not found"})
+        # if not ObjectTrack.objects.filter(project_id_id=video_id, object_id=data["object_1_id"]).exists():
+        #     raise serializers.ValidationError({"object_1_id": "Object 1 not found"})
 
-        if not ObjectTrack.objects.filter(project_id_id=video_id, object_id=data["object_2_id"]).exists():
-            raise serializers.ValidationError({"object_2_id": "Object 2 not found"})
-        
+        # if not ObjectTrack.objects.filter(project_id_id=video_id, object_id=data["object_2_id"]).exists():
+        #     raise serializers.ValidationError({"object_2_id": "Object 2 not found"})
+
+        try:
+            ObjectLifecycleService.get_active_object(video_id, data["object_1_id"])
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError({"object_1_id": "Active Object 1 not found"})
+
+        try:
+            ObjectLifecycleService.get_active_object(video_id, data["object_2_id"])
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError({"object_2_id": "Active Object 2 not found"})
+
+
         if data["object_1_start"] > data["object_1_end"]:
             raise serializers.ValidationError({"object_1_range": "Invalid range"})
 
@@ -1139,20 +1176,30 @@ class SwapObjectSerializer(serializers.Serializer):
             rows_updated = qs.update(**update_map)
 
             # 4️⃣ Swap ObjectTrack IDs
-            obj1_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj1)
-            obj2_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj2)
+            # obj1_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj1)
+            # obj2_row = ObjectTrack.objects.get(project_id_id=video_id, object_id=obj2)
 
-            # Use sentinel swap to avoid collision
-            obj1_row.object_id = SENTINEL
-            obj1_row.save(update_fields=["object_id"])
+            # # Use sentinel swap to avoid collision
+            # obj1_row.object_id = SENTINEL
+            # obj1_row.save(update_fields=["object_id"])
 
-            obj2_row.object_id = obj1
-            obj2_row.operation_note = f"swap_with_object_{obj1}"
-            obj2_row.save(update_fields=["object_id", "operation_note"])
+            # obj2_row.object_id = obj1
+            # obj2_row.operation_note = f"swap_with_object_{obj1}"
+            # obj2_row.save(update_fields=["object_id", "operation_note"])
 
-            obj1_row.object_id = obj2
-            obj1_row.operation_note = f"swap_with_object_{obj2}"
-            obj1_row.save(update_fields=["object_id", "operation_note"])
+            # obj1_row.object_id = obj2
+            # obj1_row.operation_note = f"swap_with_object_{obj2}"
+            # obj1_row.save(update_fields=["object_id", "operation_note"])
+
+            obj1_row = ObjectLifecycleService.get_active_object(video_id, obj1)
+            obj2_row = ObjectLifecycleService.get_active_object(video_id, obj2)
+
+            ObjectLifecycleService.swap_objects(
+                obj1=obj1_row,
+                obj2=obj2_row,
+                sentinel=SENTINEL
+            )
+
 
             obj1_row.refresh_from_db()
             obj2_row.refresh_from_db()
@@ -1206,20 +1253,28 @@ class DeleteObjectSerializer(serializers.Serializer):
                 "start_frame must be less than or equal to end_frame"
             )
 
-        # 3️ObjectTrack validation (ACTIVE CHECK)
+        # # 3️ObjectTrack validation (ACTIVE CHECK)
+        # try:
+        #     obj_track = ObjectTrack.objects.get(
+        #         project_id_id=project_id,
+        #         object_id=object_id
+        #     )
+        # except ObjectTrack.DoesNotExist:
+        #     raise serializers.ValidationError("Object not found in object_track")
+
         try:
-            obj_track = ObjectTrack.objects.get(
-                project_id_id=project_id,
+            obj_track = ObjectLifecycleService.get_active_object(
+                project_id=project_id,
                 object_id=object_id
             )
         except ObjectTrack.DoesNotExist:
-            raise serializers.ValidationError("Object not found in object_track")
+            raise serializers.ValidationError("Active object not found")
 
         # IMPORTANT CHECK
-        if obj_track.object_status != 1:
-            raise serializers.ValidationError(
-                "Object is already inactive. No delete operation performed."
-            )
+        # if obj_track.object_status != 1:
+        #     raise serializers.ValidationError(
+        #         "Object is already inactive. No delete operation performed."
+        #     )
 
         # Range must lie inside lifecycle
         if start_frame < obj_track.start_frame or end_frame > obj_track.end_frame:
@@ -1260,7 +1315,7 @@ class DeleteObjectSerializer(serializers.Serializer):
         )
 
         #object_id_fields = self._get_object_id_fields()
-        object_id_fields = ObjectSlotAdapter.get_object_id_fields()
+        # object_id_fields = ObjectSlotAdapter.get_object_id_fields()
 
         with transaction.atomic():
 
@@ -1286,11 +1341,16 @@ class DeleteObjectSerializer(serializers.Serializer):
             affected_frames = frames_qs.update(**update_map)
 
             # UPDATE OBJECT TRACK (single row)
-            obj_track.object_status = 0
-            obj_track.operation_note = (
-                f"deleted_frames_{start_frame}_to_{end_frame}"
+            # obj_track.object_status = 0
+            # obj_track.operation_note = (
+            #     f"deleted_frames_{start_frame}_to_{end_frame}"
+            # )
+            # obj_track.save(update_fields=["object_status", "operation_note"])
+            ObjectLifecycleService.deactivate_object(
+                obj_track,
+                note=f"deleted_frames_{start_frame}_to_{end_frame}"
             )
-            obj_track.save(update_fields=["object_status", "operation_note"])
+
 
         return {
             "object_id": object_id,
