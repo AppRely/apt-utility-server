@@ -124,34 +124,62 @@ class ObjectSlotAdapter:
 
 
 
-    @classmethod
-    def find_object_slot(cls, project_id: int, object_id: int) -> str | None:
-        """
-        Find which object_*_id column contains the given object_id.
-        Executes exactly ONE DB query.
-        """
-        object_fields = cls.get_object_id_fields()
+    # @classmethod
+    # def find_object_slot(cls, project_id: int, object_id: int) -> str | None:
+    #     """
+    #     Find which object_*_id column contains the given object_id.
+    #     Executes exactly ONE DB query.
+    #     """
+    #     object_fields = cls.get_object_id_fields()
 
-        q = Q()
-        for field in object_fields:
-            q |= Q(**{field: object_id})
+    #     q = Q()
+    #     for field in object_fields:
+    #         q |= Q(**{field: object_id})
 
-        row = (
-            VideoData.objects
-            .filter(video_id=project_id)
-            .filter(q)
-            .only(*object_fields)
-            .first()
-        )
+    #     row = (
+    #         VideoData.objects
+    #         .filter(video_id=project_id)
+    #         .filter(q)
+    #         .only(*object_fields)
+    #         .first()
+    #     )
 
-        if not row:
-            return None
+    #     if not row:
+    #         return None
 
-        for field in object_fields:
-            if getattr(row, field) == object_id:
-                return field
+    #     for field in object_fields:
+    #         if getattr(row, field) == object_id:
+    #             return field
 
-        return None
+    #     return None
+
+    # @classmethod
+    # def find_object_slot_for_range(
+    #     cls,
+    #     *,
+    #     project_id: int,
+    #     object_id: int,
+    #     start_frame: int,
+    #     end_frame: int,
+    # ) -> str | None:
+    #     """
+    #     Find which object_*_id column contains object_id
+    #     WITHIN the given frame range.
+    #     """
+    #     object_fields = cls.get_object_id_fields()
+
+    #     for field in object_fields:
+    #         exists = VideoData.objects.filter(
+    #             video_id=project_id,
+    #             frame_no__gte=start_frame,
+    #             frame_no__lte=end_frame,
+    #             **{field: object_id}
+    #         ).exists()
+
+    #         if exists:
+    #             return field
+
+    #     return None
 
 
     @classmethod
@@ -165,6 +193,38 @@ class ObjectSlotAdapter:
         for field in cls.get_object_id_fields():
             update_map[field] = Case(
                 When(**{field: old_object_id}, then=Value(new_object_id)),
+                default=field,
+                output_field=IntegerField(),
+            )
+
+        return update_map
+
+    @classmethod
+    def build_bulk_replace_map_for_range(
+        cls,
+        *,
+        old_object_id: int,
+        new_object_id: int,
+        start_frame: int,
+        end_frame: int,
+    ):
+        """
+        Replace old_object_id → new_object_id
+        ONLY within given frame range
+        across ALL object_*_id slots.
+        """
+        update_map = {}
+
+        for field in cls.get_object_id_fields():
+            update_map[field] = Case(
+                When(
+                    **{
+                        field: old_object_id,
+                        "frame_no__gte": start_frame,
+                        "frame_no__lte": end_frame,
+                    },
+                    then=Value(new_object_id),
+                ),
                 default=field,
                 output_field=IntegerField(),
             )

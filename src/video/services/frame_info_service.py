@@ -1,47 +1,6 @@
 from ..models import VideoData, ObjectTrack
 from .object_slot_adapter import ObjectSlotAdapter
 
-# class FrameInfoService:
-
-#     @staticmethod
-#     def fetch(video_id: int, frame_no: int):
-#         # 1️⃣ Fetch frame (single query)
-#         frame_data = VideoData.objects.get(
-#             video_id=video_id,
-#             frame_no=frame_no
-#         )
-
-#         # 2️⃣ Fetch ALL object tracks in one query (🔥 no N+1)
-#         track_map = {
-#             t.object_id: t
-#             for t in ObjectTrack.objects.filter(project_id_id=video_id)
-#         }
-
-#         objects = []
-
-#         # 3️⃣ Build objects list dynamically
-#         for id_field, coord_field in ObjectSlotAdapter.get_object_fields():
-#             obj_id = getattr(frame_data, id_field)
-#             coords = getattr(frame_data, coord_field)
-
-#             if obj_id is None:
-#                 continue
-
-#             track = track_map.get(obj_id)
-
-#             objects.append({
-#                 "object_id": obj_id,
-#                 "coordinates": coords,
-#                 "start_frame": track.start_frame if track else None,
-#                 "end_frame": track.end_frame if track else None,
-#             })
-
-#         return {
-#             "video_id": video_id,
-#             "frame_number": frame_no,
-#             "objects": objects,
-#         }
-
 class FrameInfoService:
 
     @staticmethod
@@ -60,7 +19,7 @@ class FrameInfoService:
             if getattr(frame, field) is not None
         }
 
-        # 🔥 SINGLE QUERY for all tracks
+        # SINGLE QUERY for all tracks
         tracks = {
             t.object_id: t
             for t in ObjectTrack.objects.filter(

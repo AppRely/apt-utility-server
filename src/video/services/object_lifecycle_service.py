@@ -33,12 +33,12 @@ class ObjectLifecycleService:
 
         # Step 2: obj2 → obj1
         obj2.object_id = obj1_id
-        obj2.operation_note = f"swap_with_object_{obj2_id}"
+        obj2.operation_note = f"swap_with_object_{obj1_id}"
         obj2.save(update_fields=["object_id", "operation_note"])
 
         # Step 3: obj1 → obj2
         obj1.object_id = obj2_id
-        obj1.operation_note = f"swap_with_object_{obj1_id}"
+        obj1.operation_note = f"swap_with_object_{obj2_id}"
         obj1.save(update_fields=["object_id", "operation_note"])
 
     @staticmethod

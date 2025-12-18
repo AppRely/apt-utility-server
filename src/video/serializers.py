@@ -20,6 +20,7 @@ from .services.object_slot_adapter import ObjectSlotAdapter
 from .services.object_lifecycle_service import ObjectLifecycleService
 from .services.frame_object_range_service import FrameObjectRangeService
 from .services.frame_info_service import FrameInfoService 
+from .services.project_upload_service import ProjectUploadService
 from .models import Project, VideoData, ObjectTrack
 
 
@@ -28,6 +29,9 @@ class VideoSerializer(serializers.ModelSerializer):
         model = Video
         fields = "__all__"
 
+# =============================
+# PROJECT SERIALIZERS
+# =============================
 
 class ProjectUploadSerializer(serializers.Serializer):
     """
@@ -39,312 +43,349 @@ class ProjectUploadSerializer(serializers.Serializer):
     video_file = serializers.FileField()
     tracking_file = serializers.FileField(write_only=True)
 
-    BULK_INSERT_CHUNK_SIZE: int = 5000
-    MAX_OBJECT_SLOTS: int = 10
+    # BULK_INSERT_CHUNK_SIZE: int = 5000
+    # MAX_OBJECT_SLOTS: int = 10
 
-    def create(self, validated_data: dict) -> dict[str, int]:
-        project_name = validated_data["project_name"]
-        video_file = validated_data["video_file"]
-        trk_file = validated_data["tracking_file"]
+    # def create(self, validated_data: dict) -> dict[str, int]:
+    #     project_name = validated_data["project_name"]
+    #     video_file = validated_data["video_file"]
+    #     trk_file = validated_data["tracking_file"]
 
-        # Setup paths
-        video_folder, track_folder = self._get_media_paths()
-        video_disk_path = os.path.join(video_folder, os.path.basename(video_file.name))
-        trk_disk_path = os.path.join(track_folder, os.path.basename(trk_file.name))
+    #     # Setup paths
+    #     video_folder, track_folder = self._get_media_paths()
+    #     video_disk_path = os.path.join(video_folder, os.path.basename(video_file.name))
+    #     trk_disk_path = os.path.join(track_folder, os.path.basename(trk_file.name))
 
-        project = None
+    #     project = None
 
-        try:
-            # 1. Save raw files to disk
-            self._write_file(video_file, video_disk_path)
-            self._write_file(trk_file, trk_disk_path)
+    #     try:
+    #         # 1. Save raw files to disk
+    #         self._write_file(video_file, video_disk_path)
+    #         self._write_file(trk_file, trk_disk_path)
 
-            # 2. Parse TRK first BEFORE creating project
-            trk = Trk(trk_disk_path)
+    #         # 2. Parse TRK first BEFORE creating project
+    #         trk = Trk(trk_disk_path)
 
-            # Validate TRK has usable data
-            if trk.getframe(trk.T0) is None:
-                raise ValueError("Upload failed — no TRK data extracted.")
+    #         # Validate TRK has usable data
+    #         if trk.getframe(trk.T0) is None:
+    #             raise ValueError("Upload failed — no TRK data extracted.")
 
-            if Project.objects.filter(project_name=project_name).exists():
-                    raise serializers.ValidationError({
-                        "project_name": "Project name already exists. Please use a new name."
-                    })
+    #         if Project.objects.filter(project_name=project_name).exists():
+    #                 raise serializers.ValidationError({
+    #                     "project_name": "Project name already exists. Please use a new name."
+    #                 })
 
-            # 3. Create project ONLY after TRK passes validation
-            with transaction.atomic():
-                project = Project.objects.create(
-                    project_name=project_name,
-                    video_name=video_file.name,
-                    video_path=video_disk_path,
-                    trk_file_name=trk_file.name,
-                    trk_file_path=trk_disk_path,
-                    project_status="inprogress",
-                    status="Completed",   # Directly completed
-                )
+    #         # 3. Create project ONLY after TRK passes validation
+    #         with transaction.atomic():
+    #             project = Project.objects.create(
+    #                 project_name=project_name,
+    #                 video_name=video_file.name,
+    #                 video_path=video_disk_path,
+    #                 trk_file_name=trk_file.name,
+    #                 trk_file_path=trk_disk_path,
+    #                 project_status="inprogress",
+    #                 status="Completed",   # Directly completed
+    #             )
 
-                # video_id = project_id
-                project.video_id = project.project_id
-                project.save(update_fields=["video_id"])
+    #             # video_id = project_id
+    #             project.video_id = project.project_id
+    #             project.save(update_fields=["video_id"])
 
-                # 4. Insert TRK Data
-                rows_inserted = self._persist_trk_data(project.project_id, trk)
+    #             # 4. Insert TRK Data
+    #             rows_inserted = self._persist_trk_data(project.project_id, trk)
 
-                if rows_inserted == 0:
-                    raise ValueError("Upload failed — no TRK frames inserted")
+    #             if rows_inserted == 0:
+    #                 raise ValueError("Upload failed — no TRK frames inserted")
 
-                # 5. Insert unique object start/end track data
-                self._persist_object_tracks(project.project_id, trk)
+    #             # 5. Insert unique object start/end track data
+    #             self._persist_object_tracks(project.project_id, trk)
 
-            # ------------------------------------------------------------
-            #  CORRECT STREAM URL GENERATION FOR PROJECT MODEL
-            # ------------------------------------------------------------
-            request = self.context.get("request")
+    #         # ------------------------------------------------------------
+    #         #  CORRECT STREAM URL GENERATION FOR PROJECT MODEL
+    #         # ------------------------------------------------------------
+    #         request = self.context.get("request")
 
-            if request:
-                video_stream_url = request.build_absolute_uri(
-                    f"/api/v1/videos/{project.project_id}/project-stream/"
-                )
-                trk_stream_url = request.build_absolute_uri(
-                    f"/api/v1/videos/{project.project_id}/project-stream-trk/"
-                )
-            else:
-                video_stream_url = None
-                trk_stream_url = None
+    #         if request:
+    #             video_stream_url = request.build_absolute_uri(
+    #                 f"/api/v1/videos/{project.project_id}/project-stream/"
+    #             )
+    #             trk_stream_url = request.build_absolute_uri(
+    #                 f"/api/v1/videos/{project.project_id}/project-stream-trk/"
+    #             )
+    #         else:
+    #             video_stream_url = None
+    #             trk_stream_url = None
 
-            # Save STREAM URLs into DB instead of disk path
-            project.video_path = video_stream_url
-            project.trk_file_path = trk_stream_url
-            project.save(update_fields=["video_path", "trk_file_path"])
-            # ------------------------------------------------------------
+    #         # Save STREAM URLs into DB instead of disk path
+    #         project.video_path = video_stream_url
+    #         project.trk_file_path = trk_stream_url
+    #         project.save(update_fields=["video_path", "trk_file_path"])
+    #         # ------------------------------------------------------------
 
-            # Return final JSON
-            return {
-                "project_id": project.project_id,
-                "rows_inserted": rows_inserted,
-                "video_stream_url": video_stream_url,
-                "trk_stream_url": trk_stream_url,
-            }
+    #         # Return final JSON
+    #         return {
+    #             "project_id": project.project_id,
+    #             "rows_inserted": rows_inserted,
+    #             "video_stream_url": video_stream_url,
+    #             "trk_stream_url": trk_stream_url,
+    #         }
 
-        except Exception as exc:
-            self._cleanup_failed_upload(project, video_disk_path, trk_disk_path)
-            raise serializers.ValidationError({"detail": f"Upload failed: {str(exc)}"})
+    #     except Exception as exc:
+    #         self._cleanup_failed_upload(project, video_disk_path, trk_disk_path)
+    #         raise serializers.ValidationError({"detail": f"Upload failed: {str(exc)}"})
 
-    def _persist_trk_data(self, project_id: int, trk: Trk) -> int:
-        """
-        Parses the TRK object and inserts VideoData rows in bulk.
-        """
-        bulk_data: list[VideoData] = []
-        total_rows: int = 0
+    # def _persist_trk_data(self, project_id: int, trk: Trk) -> int:
+    #     """
+    #     Parses the TRK object and inserts VideoData rows in bulk.
+    #     """
+    #     bulk_data: list[VideoData] = []
+    #     total_rows: int = 0
 
-        # =============================================================
-        # LOAD START/END FRAMES + TRUE OBJECT IDS
-        # =============================================================
-        trk_object_ids = np.array(trk.pTrkiTgt).flatten()        # maps index → object ID
+    #     # =============================================================
+    #     # LOAD START/END FRAMES + TRUE OBJECT IDS
+    #     # =============================================================
+    #     trk_object_ids = np.array(trk.pTrkiTgt).flatten()        # maps index → object ID
 
-        # Safely get global frame range
-        start = int(getattr(trk, "T0", 0))
-        end = int(getattr(trk, "T1", start))
+    #     # Safely get global frame range
+    #     start = int(getattr(trk, "T0", 0))
+    #     end = int(getattr(trk, "T1", start))
 
-        for frame in range(start, end + 1):
-            frame_array = trk.getframe(frame)  # Returns (L, D, 1, N) or similar
-            if frame_array is None:
-                continue
+    #     for frame in range(start, end + 1):
+    #         frame_array = trk.getframe(frame)  # Returns (L, D, 1, N) or similar
+    #         if frame_array is None:
+    #             continue
 
-            arr = np.asarray(frame_array)
+    #         arr = np.asarray(frame_array)
 
-            # Fix dimensions: (L, D, 1, N) -> (L, D, N)
-            if arr.shape[-2] == 1:
-                arr = arr.squeeze(axis=-2)
+    #         # Fix dimensions: (L, D, 1, N) -> (L, D, N)
+    #         if arr.shape[-2] == 1:
+    #             arr = arr.squeeze(axis=-2)
 
-            if arr.ndim != 3:
-                continue
+    #         if arr.ndim != 3:
+    #             continue
 
-            num_objects = arr.shape[-1]
-            objects_present: list[int] = []
-            objects_data: dict[int, dict] = {}
+    #         num_objects = arr.shape[-1]
+    #         objects_present: list[int] = []
+    #         objects_data: dict[int, dict] = {}
 
-            # ---- Extract per-object values ----
-            for obj_id in range(num_objects):
-                coords = arr[..., obj_id]
+    #         # ---- Extract per-object values ----
+    #         for obj_id in range(num_objects):
+    #             coords = arr[..., obj_id]
 
-                # Stricter check: if ANY coordinate is NaN, consider the object invalid for this frame
-                if np.any(np.isnan(coords)):
-                    continue
+    #             # Stricter check: if ANY coordinate is NaN, consider the object invalid for this frame
+    #             if np.any(np.isnan(coords)):
+    #                 continue
 
-                # Extract auxiliary data (Confidence, Tag, Timestamp)
-                conf = self._extract_aux_data(trk, "pTrkConf", frame, obj_id)
-                tag = self._extract_aux_data(trk, "pTrkTag", frame, obj_id)
-                ts = self._extract_aux_data(trk, "pTrkTS", frame, obj_id)
+    #             # Extract auxiliary data (Confidence, Tag, Timestamp)
+    #             conf = self._extract_aux_data(trk, "pTrkConf", frame, obj_id)
+    #             tag = self._extract_aux_data(trk, "pTrkTag", frame, obj_id)
+    #             ts = self._extract_aux_data(trk, "pTrkTS", frame, obj_id)
 
-                objects_present.append(obj_id)
-                objects_data[obj_id] = {
-                    "coordinates": self._sanitize_data(coords.tolist()),
-                    "confidence": self._sanitize_data(conf),
-                    "tag": self._sanitize_data(tag),
-                    "timestamp": self._sanitize_data(ts),
-                }
+    #             objects_present.append(obj_id)
+    #             objects_data[obj_id] = {
+    #                 "coordinates": self._sanitize_data(coords.tolist()),
+    #                 "confidence": self._sanitize_data(conf),
+    #                 "tag": self._sanitize_data(tag),
+    #                 "timestamp": self._sanitize_data(ts),
+    #             }
 
-            if not objects_present:
-                continue
+    #         if not objects_present:
+    #             continue
 
-            # ---- Prepare Frame-Wide JSON Arrays ----
-            all_conf = [objects_data[oid]["confidence"] for oid in objects_present]
-            all_tag = [objects_data[oid]["tag"] for oid in objects_present]
-            all_ts = [objects_data[oid]["timestamp"] for oid in objects_present]
+    #         # ---- Prepare Frame-Wide JSON Arrays ----
+    #         all_conf = [objects_data[oid]["confidence"] for oid in objects_present]
+    #         all_tag = [objects_data[oid]["tag"] for oid in objects_present]
+    #         all_ts = [objects_data[oid]["timestamp"] for oid in objects_present]
 
-            # ---- OBJECT SLOTS ----
-            # Pack the valid objects (up to MAX_SLOTS) into the fixed DB columns.
-            # Example: If only object_id 1386 exists, it goes into 'object_1_*' slots,
-            # but 'object_1_id' will store 1386 to preserve identity.
-            slots = {}
-            slot_num = 1
-            for obj_id in objects_present[:self.MAX_OBJECT_SLOTS]:
+    #         # ---- OBJECT SLOTS ----
+    #         # Pack the valid objects (up to MAX_SLOTS) into the fixed DB columns.
+    #         # Example: If only object_id 1386 exists, it goes into 'object_1_*' slots,
+    #         # but 'object_1_id' will store 1386 to preserve identity.
+    #         slots = {}
+    #         slot_num = 1
+    #         for obj_id in objects_present[:self.MAX_OBJECT_SLOTS]:
 
-                coords = objects_data[obj_id]["coordinates"]
+    #             coords = objects_data[obj_id]["coordinates"]
 
-                # TRUE OBJECT ID from TRK (this is CRITICAL)
-                true_id = int(trk_object_ids[obj_id])
-                # Assign slot values
-                slots[f"object_{slot_num}_id"] = true_id
-                slots[f"object_{slot_num}_coordinates"] = coords
+    #             # TRUE OBJECT ID from TRK (this is CRITICAL)
+    #             true_id = int(trk_object_ids[obj_id])
+    #             # Assign slot values
+    #             slots[f"object_{slot_num}_id"] = true_id
+    #             slots[f"object_{slot_num}_coordinates"] = coords
 
-                slot_num += 1
+    #             slot_num += 1
 
-            # Fill remaining slots with None
-            for s in range(slot_num, self.MAX_OBJECT_SLOTS + 1):
-                slots[f"object_{s}_id"] = None
-                slots[f"object_{s}_coordinates"] = None
+    #         # Fill remaining slots with None
+    #         for s in range(slot_num, self.MAX_OBJECT_SLOTS + 1):
+    #             slots[f"object_{s}_id"] = None
+    #             slots[f"object_{s}_coordinates"] = None
 
-            # ---- Add to Bulk List ----
-            bulk_data.append(
-                VideoData(
-                    video_id=project_id,
-                    frame_no=frame,
-                    frame_timestamp=float(frame),
-                    trk_timestamp=float(frame),
-                    confidence=all_conf,
-                    tag=all_tag,
-                    timestamp=all_ts,
-                    **slots,
-                )
-            )
+    #         # ---- Add to Bulk List ----
+    #         bulk_data.append(
+    #             VideoData(
+    #                 video_id=project_id,
+    #                 frame_no=frame,
+    #                 frame_timestamp=float(frame),
+    #                 trk_timestamp=float(frame),
+    #                 confidence=all_conf,
+    #                 tag=all_tag,
+    #                 timestamp=all_ts,
+    #                 **slots,
+    #             )
+    #         )
 
-            # Execute Bulk Insert if Chunk Size Reached
-            if len(bulk_data) >= self.BULK_INSERT_CHUNK_SIZE:
-                VideoData.objects.bulk_create(bulk_data)
-                total_rows += len(bulk_data)
-                bulk_data = []
+    #         # Execute Bulk Insert if Chunk Size Reached
+    #         if len(bulk_data) >= self.BULK_INSERT_CHUNK_SIZE:
+    #             VideoData.objects.bulk_create(bulk_data)
+    #             total_rows += len(bulk_data)
+    #             bulk_data = []
 
-        # Insert remaining rows
-        if bulk_data:
-            VideoData.objects.bulk_create(bulk_data)
-            total_rows += len(bulk_data)
+    #     # Insert remaining rows
+    #     if bulk_data:
+    #         VideoData.objects.bulk_create(bulk_data)
+    #         total_rows += len(bulk_data)
 
-        return total_rows
-
-
-    # =====================================================================
-    # INSERT INTO object_track TABLE
-    # =====================================================================
-    def _persist_object_tracks(self, project_id: int, trk: Trk):
-
-        # Extract arrays from TRK
-        trk_start_frames = np.array(trk.startframes).flatten()
-        trk_end_frames = np.array(trk.endframes).flatten()
-        trk_object_ids = np.array(trk.pTrkiTgt).flatten()  # TRUE OBJECT IDs
-
-        num_objects = len(trk_object_ids)
-        bulk_tracks = []
-
-        # Loop through index values 0...N-1
-        for idx in range(num_objects):
-
-            true_object_id = int(trk_object_ids[idx])      # REAL ID
-            start_f = int(trk_start_frames[idx])           # frame for this index
-            end_f = int(trk_end_frames[idx])               # frame for this index
-
-            bulk_tracks.append(
-                ObjectTrack(
-                    project_id_id=project_id,        # ✔ FK saved correctly
-                    object_id=true_object_id,     # ✔ Save REAL object ID
-                    start_frame=start_f,
-                    end_frame=end_f,
-                    object_status=1,          # active by default
-                    operation_note=None,      # no operation yet
-                )
-            )
-
-        ObjectTrack.objects.bulk_create(bulk_tracks)
+    #     return total_rows
 
 
-    # =====================================================================
-    # HELPERS
-    # =====================================================================
+    # # =====================================================================
+    # # INSERT INTO object_track TABLE
+    # # =====================================================================
+    # def _persist_object_tracks(self, project_id: int, trk: Trk):
 
-    def _sanitize_data(self, data):
-        """
-        Recursively replace NaN values with None for JSON compatibility.
-        """
-        if data is None:
-            return None
-        if isinstance(data, (list, tuple, np.ndarray)):
-            return [self._sanitize_data(x) for x in data]
-        if isinstance(data, (float, np.floating)) and np.isnan(data):
-            return None
-        return data
+    #     # Extract arrays from TRK
+    #     trk_start_frames = np.array(trk.startframes).flatten()
+    #     trk_end_frames = np.array(trk.endframes).flatten()
+    #     trk_object_ids = np.array(trk.pTrkiTgt).flatten()  # TRUE OBJECT IDs
 
-    def _extract_aux_data(self, trk: Trk, attr_name: str, frame: int, obj_id: int) -> list | None:
-        """
-        Helper to safely extract auxiliary data (conf, tag, ts) for a specific object/frame.
-        """
-        if hasattr(trk, attr_name) and getattr(trk, attr_name) is not None:
-            data_obj = getattr(trk, attr_name)
-            val = data_obj.getframe(frame)
-            val = np.asarray(val)
-            if val.shape[-2] == 1:
-                val = val.squeeze(axis=-2)
-            return np.asarray(val[..., obj_id]).tolist()
-        return None
+    #     num_objects = len(trk_object_ids)
+    #     bulk_tracks = []
 
-    def _cleanup_failed_upload(self, project: Project | None, video_path: str, trk_path: str):
-        """
-        Rollback: Delete DB records and files if processing fails.
-        """
-        # 1. Delete VideoData rows (only if project exists)
-        if project:
-            VideoData.objects.filter(video_id=project.project_id).delete()
+    #     # Loop through index values 0...N-1
+    #     for idx in range(num_objects):
 
-        # 2. Delete Files
-        for path in [video_path, trk_path]:
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+    #         true_object_id = int(trk_object_ids[idx])      # REAL ID
+    #         start_f = int(trk_start_frames[idx])           # frame for this index
+    #         end_f = int(trk_end_frames[idx])               # frame for this index
 
-        # 3. Delete Project (only if project exists)
-        if project:
-            project.delete()
+    #         bulk_tracks.append(
+    #             ObjectTrack(
+    #                 project_id_id=project_id,        # ✔ FK saved correctly
+    #                 object_id=true_object_id,     # ✔ Save REAL object ID
+    #                 start_frame=start_f,
+    #                 end_frame=end_f,
+    #                 object_status=1,          # active by default
+    #                 operation_note=None,      # no operation yet
+    #             )
+    #         )
 
-    @staticmethod
-    def _write_file(file_obj: UploadedFile, destination: str) -> None:
-        with open(destination, "wb") as dest:
-            for chunk in file_obj.chunks():
-                dest.write(chunk)
+    #     ObjectTrack.objects.bulk_create(bulk_tracks)
 
-    @staticmethod
-    def _get_media_paths():
-        media_root = settings.MEDIA_ROOT
+
+    # # =====================================================================
+    # # HELPERS
+    # # =====================================================================
+
+    # def _sanitize_data(self, data):
+    #     """
+    #     Recursively replace NaN values with None for JSON compatibility.
+    #     """
+    #     if data is None:
+    #         return None
+    #     if isinstance(data, (list, tuple, np.ndarray)):
+    #         return [self._sanitize_data(x) for x in data]
+    #     if isinstance(data, (float, np.floating)) and np.isnan(data):
+    #         return None
+    #     return data
+
+    # def _extract_aux_data(self, trk: Trk, attr_name: str, frame: int, obj_id: int) -> list | None:
+    #     """
+    #     Helper to safely extract auxiliary data (conf, tag, ts) for a specific object/frame.
+    #     """
+    #     if hasattr(trk, attr_name) and getattr(trk, attr_name) is not None:
+    #         data_obj = getattr(trk, attr_name)
+    #         val = data_obj.getframe(frame)
+    #         val = np.asarray(val)
+    #         if val.shape[-2] == 1:
+    #             val = val.squeeze(axis=-2)
+    #         return np.asarray(val[..., obj_id]).tolist()
+    #     return None
+
+    # def _cleanup_failed_upload(self, project: Project | None, video_path: str, trk_path: str):
+    #     """
+    #     Rollback: Delete DB records and files if processing fails.
+    #     """
+    #     # 1. Delete VideoData rows (only if project exists)
+    #     if project:
+    #         VideoData.objects.filter(video_id=project.project_id).delete()
+
+    #     # 2. Delete Files
+    #     for path in [video_path, trk_path]:
+    #         if os.path.exists(path):
+    #             try:
+    #                 os.remove(path)
+    #             except OSError:
+    #                 pass
+
+    #     # 3. Delete Project (only if project exists)
+    #     if project:
+    #         project.delete()
+
+    # @staticmethod
+    # def _write_file(file_obj: UploadedFile, destination: str) -> None:
+    #     with open(destination, "wb") as dest:
+    #         for chunk in file_obj.chunks():
+    #             dest.write(chunk)
+
+    # @staticmethod
+    # def _get_media_paths():
+    #     media_root = settings.MEDIA_ROOT
         
-        video_folder = os.path.join(media_root, "video_folder")
-        track_folder = os.path.join(media_root, "track_folder")
+    #     video_folder = os.path.join(media_root, "video_folder")
+    #     track_folder = os.path.join(media_root, "track_folder")
 
-        os.makedirs(video_folder, exist_ok=True)
-        os.makedirs(track_folder, exist_ok=True)
+    #     os.makedirs(video_folder, exist_ok=True)
+    #     os.makedirs(track_folder, exist_ok=True)
 
-        return video_folder, track_folder
+    #     return video_folder, track_folder
 
+    def validate_project_name(self, value):
+        if Project.objects.filter(project_name=value).exists():
+            raise serializers.ValidationError("Project name already exists.")
+        return value
+
+    def create(self, validated_data):
+        return ProjectUploadService.create(
+            project_name=validated_data["project_name"],
+            video_file=validated_data["video_file"],
+            tracking_file=validated_data["tracking_file"],
+            request=self.context.get("request"),
+        )
+
+
+class ProjectSerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing projects with essential fields.
+    """
+    #video_file = serializers.CharField(source='video_name', read_only=True)
+    class Meta:
+        model = Project
+        fields = [
+            "project_id",
+            "project_name",
+            "video_id",
+            "video_name",
+            "video_path", 
+            "trk_file_name",
+            "trk_file_path",
+            "project_status",
+            "created_at",
+            "updated_at",
+        ]
+
+# =============================
+# FRAME SERIALIZERS
+# =============================
 
 class FrameObjectRangeSerializer(serializers.Serializer):
     """
@@ -536,30 +577,12 @@ class FrameInfoSerializer(serializers.Serializer):
         # }
 
 
-class ProjectSerializer(serializers.ModelSerializer):
-    """
-    Serializer for listing projects with essential fields.
-    """
-    #video_file = serializers.CharField(source='video_name', read_only=True)
-    class Meta:
-        model = Project
-        fields = [
-            "project_id",
-            "project_name",
-            "video_id",
-            "video_name",
-            "video_path", 
-            "trk_file_name",
-            "trk_file_path",
-            "project_status",
-            "created_at",
-            "updated_at",
-        ]
-
-
 class ListUniqueIdsSerializer(serializers.Serializer):
     def validate(self, data):
         project_id = self.context.get("project_id")
+
+        if not project_id:
+            raise serializers.ValidationError({"project_id": "project_id is required"})
 
         if not Project.objects.filter(project_id=project_id).exists():
             raise serializers.ValidationError({"project_id": "Invalid project ID"})
@@ -587,7 +610,7 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
 
     def validate(self, data):
         project_id = self.context.get("project_id")
-        obj_id = data.get("object_id")
+        # obj_id = data.get("object_id")
         frame = data.get("frame")
 
         # Validate project exists
@@ -599,14 +622,14 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
             raise serializers.ValidationError({"frame": "Frame must be >= 0"})
 
         # Validate object exists
-        obj = ObjectTrack.objects.filter(project_id_id=project_id, object_id=obj_id).first()
-        if not obj:
-            # object doesn't exist at all → mark and continue
-            data["object_missing"] = True
-            return data
+        # obj = ObjectTrack.objects.filter(project_id_id=project_id, object_id=obj_id).first()
+        # if not obj:
+        #     # object doesn't exist at all → mark and continue
+        #     data["object_missing"] = True
+        #     return data
 
         # pass object row to next method
-        data["object_row"] = obj
+        # data["object_row"] = obj
 
         return data
 
@@ -655,7 +678,9 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
             frame=self.validated_data["frame"],
         )
 
-
+# =============================
+# ACTIVITY SERIALIZERS
+# =============================
 class ActivityLogSerializer(serializers.Serializer):
 
     project_id = serializers.IntegerField(required=True)
@@ -746,14 +771,18 @@ class ActivityLogRequestSerializer(serializers.Serializer):
         """
         video_id = self.validated_data['video_id']
 
-        # 1. Get all projects linked to this video
-        project_ids = list(
-            Project.objects.filter(video_id=video_id)
-                           .values_list('project_id', flat=True)
-        )
+        # # 1. Get all projects linked to this video
+        # project_ids = list(
+        #     Project.objects.filter(video_id=video_id)
+        #                    .values_list('project_id', flat=True)
+        # )
 
-        # 2. Fetch activity logs for these projects
-        logs = ActivityLog.objects.filter(project_id__in=project_ids)
+        # # 2. Fetch activity logs for these projects
+        # logs = ActivityLog.objects.filter(project_id__in=project_ids)
+
+        logs = ActivityLog.objects.filter(
+            project_id__in=Project.objects.filter(video_id=video_id).values("project_id")
+        ).order_by("-activity_updated_at")
 
         # 3. Structure the response
         logs_data = []
@@ -772,6 +801,10 @@ class ActivityLogRequestSerializer(serializers.Serializer):
             "logs": logs_data
         }
 
+
+# =============================
+# OBJECT OPERATION SERIALIZERS
+# =============================
 
 class LinkObjectSerializer(serializers.Serializer):
     object_1_id = serializers.IntegerField(required=True)
@@ -799,18 +832,38 @@ class LinkObjectSerializer(serializers.Serializer):
         if not Project.objects.filter(project_id=video_id).exists():
             raise serializers.ValidationError({"video_id": "Invalid Video ID"})
 
+        if data["object_2_start"] > data["object_2_end"]:
+            raise serializers.ValidationError({"object_2_range": "Invalid frame range"})
+
+        if data["object_1_start"] > data["object_1_end"]:
+            raise serializers.ValidationError({"object_1_range": "Invalid frame range"})
+
         if data["object_1_id"] == data["object_2_id"]:
             raise serializers.ValidationError("Object IDs cannot be the same.")
 
-        try:
-            ObjectLifecycleService.get_active_object(video_id, data["object_1_id"])
-        except ObjectTrack.DoesNotExist:
-            raise serializers.ValidationError({"object_1_id": "Active Object 1 not found"})
+        if not ObjectTrack.objects.filter(
+            project_id_id=video_id,
+            object_id=data["object_1_id"]
+        ).exists():
+            raise serializers.ValidationError({"object_1_id": "Object 1 not found"})
 
-        try:
-            ObjectLifecycleService.get_active_object(video_id, data["object_2_id"])
-        except ObjectTrack.DoesNotExist:
-            raise serializers.ValidationError({"object_2_id": "Active Object 2 not found"})
+        if not ObjectTrack.objects.filter(
+            project_id_id=video_id,
+            object_id=data["object_2_id"]
+        ).exists():
+            raise serializers.ValidationError({"object_2_id": "Object 2 not found"})
+
+
+        # try:
+        #     ObjectLifecycleService.get_active_object(video_id, data["object_1_id"])
+        # except ObjectTrack.DoesNotExist:
+        #     raise serializers.ValidationError({"object_1_id": "Active Object 1 not found"})
+
+        #
+        # try:
+        #     ObjectLifecycleService.get_active_object(video_id, data["object_2_id"])
+        # except ObjectTrack.DoesNotExist:
+        #     raise serializers.ValidationError({"object_2_id": "Active Object 2 not found"})
 
         return data
 
@@ -1013,22 +1066,26 @@ class BreakObjectSerializer(serializers.Serializer):
             ) + 1
 
             # 2️⃣ Find object slot SAFELY (single DB query)
-            object_slot = ObjectSlotAdapter.find_object_slot(
-                project_id=project_id,
-                object_id=object_id
+            update_map = ObjectSlotAdapter.build_bulk_replace_map_for_range(
+                #project_id=project_id,
+                #object_id=object_id,
+                old_object_id=object_id,
+                new_object_id=new_object_id,
+                start_frame=break_frame + 1,
+                end_frame=end_frame
             )
 
-            if not object_slot:
-                raise serializers.ValidationError(
-                    "Object ID not found in video_data"
-                )
+            # if not object_slot:
+            #     raise serializers.ValidationError(
+            #         "Object ID not found in video_data"
+            #     )
 
             # 3️ Update video_data (frames AFTER break)
-            VideoData.objects.filter(
+            rows_updated = VideoData.objects.filter(
                 video_id=project_id,
                 frame_no__gt=break_frame,
                 frame_no__lte=end_frame
-            ).update(**{object_slot: new_object_id})
+            ).update(**update_map)
 
             # 4️ Update old object_track
             obj_track.end_frame = break_frame
@@ -1051,6 +1108,7 @@ class BreakObjectSerializer(serializers.Serializer):
             "new_object_id": new_object_id,
             "old_range": f"{start_frame}-{break_frame}",
             "new_range": f"{break_frame + 1}-{end_frame}",
+            "rows_updated_in_video_data": rows_updated,
         }
 
 
@@ -1194,11 +1252,11 @@ class SwapObjectSerializer(serializers.Serializer):
             obj1_row.save(update_fields=["object_id"])
 
             obj2_row.object_id = original_obj1
-            obj2_row.operation_note = f"swap_with_object_{original_obj1}"
+            obj2_row.operation_note = f"swap_with_object_{original_obj2}"
             obj2_row.save(update_fields=["object_id", "operation_note"])
 
             obj1_row.object_id = original_obj2
-            obj1_row.operation_note = f"swap_with_object_{original_obj2}"
+            obj1_row.operation_note = f"swap_with_object_{original_obj1}"
             obj1_row.save(update_fields=["object_id", "operation_note"])
 
 
@@ -1224,7 +1282,6 @@ class SwapObjectSerializer(serializers.Serializer):
                 "operation_note": obj2_row.operation_note,
             },
         }
-
 
 
 class DeleteObjectSerializer(serializers.Serializer):
