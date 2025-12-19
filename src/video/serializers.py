@@ -491,13 +491,13 @@ class FrameInfoSerializer(serializers.Serializer):
                 project_id_id=video_id,
                 object_id=obj_id
             ).first()
-
+                idx=i-1
                 objects.append({
                     "object_id": obj_id,
                     "coordinates": coords,
                     "start_frame": track.start_frame if track else None,
                     "end_frame": track.end_frame if track else None,
-                    # "confidence": confs[idx] if idx < len(confs) else None,
+                    "confidence": confs[idx] if idx < len(confs) else None,
                     # "tag": tags[idx] if idx < len(tags) else None,
                     # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
                     })

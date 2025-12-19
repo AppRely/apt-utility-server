@@ -58,7 +58,7 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     queryset = Video.objects.all()
     serializer_class = VideoSerializer
-    parser_classes = (MultiPartParser, FormParser, JSONParser)
+    parser_classes = (MultiPartParser, FormParser)
     permission_classes = [AllowAny]
 
     def _stream_video_with_range(self, file_path, range_header):
@@ -398,7 +398,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                     if 'frames' in obj:
                         for frame in obj['frames']:
                             # Delete the fields you don't want
-                            frame.pop('confidence', None)
+                            # frame.pop('confidence', None)
                             frame.pop('tag', None) 
                             frame.pop('timestamp', None)
             
