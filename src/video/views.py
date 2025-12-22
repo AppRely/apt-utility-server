@@ -30,7 +30,7 @@ from .serializers import (
     LinkObjectSerializer,
     ActivityLogSerializer,
     ActivityLogRequestSerializer,
-    # BreakObjectSerializer,
+    BreakObjectSerializer,
     SwapObjectSerializer,
     # DeleteObjectSerializer,
 )
@@ -1196,77 +1196,77 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
 
-    # @swagger_auto_schema(
-    #     method="post",
-    #     operation_description=(
-    #         "Break an object track into two at a given frame. "
-    #         "The original object is split into two active objects. "
-    #         "All operations are performed atomically."
-    #     ),
-    #     request_body=BreakObjectSerializer,
-    #     responses={
-    #         200: "Object break operation completed successfully",
-    #         400: "Validation error",
-    #         500: "Internal server error",
-    #     },
-    # )
-    # @action(detail=True, methods=["post"], url_path="objects/break")
-    # def break_object(self, request, pk=None):
-    #     """
-    #     POST /api/v1/videos/{project_id}/objects/break/
+    @swagger_auto_schema(
+        method="post",
+        operation_description=(
+            "Break an object track into two at a given frame. "
+            "The original object is split into two active objects. "
+            "All operations are performed atomically."
+        ),
+        request_body=BreakObjectSerializer,
+        responses={
+            200: "Object break operation completed successfully",
+            400: "Validation error",
+            500: "Internal server error",
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="objects/break")
+    def break_object(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/objects/break/
 
-    #     Split an object track into two at a specified frame.
+        Split an object track into two at a specified frame.
 
-    #     The original object is divided into two active objects, and all
-    #     related tracking data is updated atomically.
+        The original object is divided into two active objects, and all
+        related tracking data is updated atomically.
 
-    #     Args:
-    #         object_id (int): Identifier of the object to be broken.
-    #         brake_frame (int): Frame number at which to split the object.
-    #         start_frame (int): Start frame of the object.
-    #         end_frame (int): End frame of the object.
-    #         pk (int): Project identifier.
+        Args:
+            object_id (int): Identifier of the object to be broken.
+            brake_frame (int): Frame number at which to split the object.
+            start_frame (int): Start frame of the object.
+            end_frame (int): End frame of the object.
+            pk (int): Project identifier.
 
-    #     Returns:
-    #         Response: Result of the break operation.
-    #     """
-    #     try:
-    #         serializer = BreakObjectSerializer(
-    #             data=request.data,
-    #             context={"project_id": pk}
-    #         )
-    #         serializer.is_valid(raise_exception=True)
-    #         result = serializer.save()
+        Returns:
+            Response: Result of the break operation.
+        """
+        try:
+            serializer = BreakObjectSerializer(
+                data=request.data,
+                context={"project_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.save()
 
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "message": "Object break operation completed successfully",
-    #                 "data": result,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Object break operation completed successfully",
+                    "data": result,
+                },
+                status=status.HTTP_200_OK,
+            )
 
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid input data",
-    #                 "errors": ve.detail,
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    #     except Exception as e:
-    #         logger.error(f"Error during break operation: {str(e)}", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while breaking the object.",
-    #                 "errors": str(e),
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception as e:
+            logger.error(f"Error during break operation: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while breaking the object.",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @swagger_auto_schema(
         method="put",

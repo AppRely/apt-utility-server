@@ -1017,141 +1017,128 @@ class LinkObjectSerializer(serializers.Serializer):
         }
 
 
-# class BreakObjectSerializer(serializers.Serializer):
-#     object_id = serializers.IntegerField(required=True)
-#     break_frame = serializers.IntegerField(required=True)
+class BreakObjectSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(required=True)
+    break_frame = serializers.IntegerField(required=True)
 
-#     # optional (frontend may send)
-#     start_frame = serializers.IntegerField(required=False)
-#     end_frame = serializers.IntegerField(required=False)
+    # optional (frontend may send)
+    start_frame = serializers.IntegerField(required=False)
+    end_frame = serializers.IntegerField(required=False)
 
-#     # ---------------------------
-#     # VALIDATION
-#     # ---------------------------
-#     def validate(self, data):
-#         project_id = self.context["project_id"]
-#         object_id = data["object_id"]
-#         break_frame = data["break_frame"]
+    # ---------------------------
+    # VALIDATION
+    # ---------------------------
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        object_id = data["object_id"]
+        break_frame = data["break_frame"]
 
-#         # 1️ Project validation
-#         if not Project.objects.filter(project_id=project_id).exists():
-#             raise serializers.ValidationError("Invalid project_id")
+        # 1️ Project validation
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError("Invalid project_id")
 
-#         # 2️ Active object validation
-#         try:
-#             obj_track = ObjectLifecycleService.get_active_object(
-#                 project_id=project_id,
-#                 object_id=object_id
-#             )
-#         except ObjectTrack.DoesNotExist:
-#             raise serializers.ValidationError("Active object not found")
+        # 2️ Active object validation
+        try:
+            obj_track = ObjectLifecycleService.get_active_object(
+                project_id=project_id,
+                object_id=object_id
+            )
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError("Active object not found")
 
-#         # db_start = obj_track.start_frame
-#         # db_end = obj_track.end_frame
+        # db_start = obj_track.start_frame
+        # db_end = obj_track.end_frame
+        # 3️ Break-frame validation
+        if not (obj_track.start_frame < break_frame < obj_track.end_frame):
+            raise serializers.ValidationError(
+                f"break_frame must be between {obj_track.start_frame} and {obj_track.end_frame}"
+            )
 
-#         # 3️ Break-frame validation
-#         if not (obj_track.start_frame < break_frame < obj_track.end_frame):
-#             raise serializers.ValidationError(
-#                 f"break_frame must be between {obj_track.start_frame} and {obj_track.end_frame}"
-#             )
+        # 4️ Optional frontend validation
+        if "start_frame" in data and data["start_frame"] != obj_track.start_frame:
+            raise serializers.ValidationError("start_frame mismatch with DB")
 
-#         # 4️ Optional frontend validation
-#         if "start_frame" in data and data["start_frame"] != obj_track.start_frame:
-#             raise serializers.ValidationError("start_frame mismatch with DB")
+        if "end_frame" in data and data["end_frame"] != obj_track.end_frame:
+            raise serializers.ValidationError("end_frame mismatch with DB")
 
-#         if "end_frame" in data and data["end_frame"] != obj_track.end_frame:
-#             raise serializers.ValidationError("end_frame mismatch with DB")
+        # Attach DB info
+        data["obj_track"] = obj_track
+        # data["db_start"] = obj_track.start_frame
+        # data["db_end"] = obj_track.end_frame
 
-#         # Attach DB info
-#         data["obj_track"] = obj_track
-#         # data["db_start"] = db_start
-#         # data["db_end"] = db_end
-
-#         return data
-
-#     # ---------------------------
-#     # DYNAMIC OBJECT SLOT FETCH
-#     # ---------------------------
-#     # def _get_object_id_fields(self):
-#     #     return [
-#     #         field.name
-#     #         for field in VideoData._meta.fields
-#     #         if field.name.startswith("object_") and field.name.endswith("_id")
-#     #     ]
+        return data
 
 
-#     # ---------------------------
-#     # CREATE (ALL BREAK LOGIC)
-#     # ---------------------------
-#     def create(self, validated_data):
-#         project_id = self.context["project_id"]
+    # ---------------------------
+    # DYNAMIC OBJECT SLOT FETCH
+    # ---------------------------
+    # def _get_object_id_fields(self):
+    #     return [
+    #         field.name
+    #         for field in VideoData._meta.fields
+    #         if field.name.startswith("object_") and field.name.endswith("_id")
+    #     ]
 
-#         object_id = validated_data["object_id"]
-#         break_frame = validated_data["break_frame"]
-#         obj_track = validated_data["obj_track"]
-#         start_frame = obj_track.start_frame
-#         end_frame = obj_track.end_frame
+    # ---------------------------
+    # CREATE (ALL BREAK LOGIC)
+    # ---------------------------
+    def create(self, validated_data):
+        project_id = self.context["project_id"]
 
-#         with transaction.atomic():
+        object_id = validated_data["object_id"]
+        break_frame = validated_data["break_frame"]
+        obj_track = validated_data["obj_track"]
+        start_frame = obj_track.start_frame
+        end_frame = obj_track.end_frame
 
-#             # 1️ Generate new object_id
-#             # max_id = ObjectTrack.objects.filter(
-#             #     project_id_id=project_id
-#             # ).aggregate(m=Max("object_id"))["m"] or 0
+        with transaction.atomic():
 
-#             # new_object_id = max_id + 1
+            # 1️ Generate new object_id
+            new_object_id = (
+                ObjectTrack.objects
+                .filter(project_id_id=project_id)
+                .aggregate(m=Max("object_id"))["m"] or 0
+            ) + 1
 
-#             new_object_id = (
-#                 ObjectTrack.objects
-#                 .filter(project_id_id=project_id)
-#                 .aggregate(m=Max("object_id"))["m"] or 0
-#             ) + 1
-
-#             # 2️⃣ Find object slot SAFELY (single DB query)
-#             update_map = ObjectSlotAdapter.build_bulk_replace_map_for_range(
-#                 #project_id=project_id,
-#                 #object_id=object_id,
-#                 old_object_id=object_id,
-#                 new_object_id=new_object_id,
-#                 start_frame=break_frame + 1,
-#                 end_frame=end_frame
-#             )
-
-#             # if not object_slot:
-#             #     raise serializers.ValidationError(
-#             #         "Object ID not found in video_data"
-#             #     )
-
-#             # 3️ Update video_data (frames AFTER break)
-#             rows_updated = VideoData.objects.filter(
-#                 video_id=project_id,
-#                 frame_no__gt=break_frame,
-#                 frame_no__lte=end_frame
-#             ).update(**update_map)
-
-#             # 4️ Update old object_track
-#             obj_track.end_frame = break_frame
-#             obj_track.operation_note = f"break_from_{start_frame}_to_{break_frame}"
-#             obj_track.save(update_fields=["end_frame", "operation_note"])
-
-#             # 5️ Create new object_track
-#             ObjectTrack.objects.create(
-#                 project_id_id=project_id,
-#                 object_id=new_object_id,
-#                 start_frame=break_frame + 1,
-#                 end_frame=end_frame,
-#                 object_status=1,
-#                 operation_note=f"break_from_{break_frame + 1}_to_{end_frame}"
-#             )
+            # 2️ Update FrameObject (frames AFTER break)
 
 
-#         return {
-#             "old_object_id": object_id,
-#             "new_object_id": new_object_id,
-#             "old_range": f"{start_frame}-{break_frame}",
-#             "new_range": f"{break_frame + 1}-{end_frame}",
-#             "rows_updated_in_video_data": rows_updated,
-#         }
+
+
+
+
+
+
+            rows_updated = FrameObject.objects.filter(
+                frame__project_id_id=project_id,
+                frame__frame_no__gt=break_frame,
+                frame__frame_no__lte=end_frame,
+                object_id=object_id
+            ).update(object_id=new_object_id)
+
+            # 3️ Update old object_track
+            obj_track.end_frame = break_frame
+            obj_track.operation_note = f"break_from_{start_frame}_to_{break_frame}"
+            obj_track.save(update_fields=["end_frame", "operation_note"])
+
+            # 4️ Create new object_track
+            ObjectTrack.objects.create(
+                project_id_id=project_id,
+                object_id=new_object_id,
+                start_frame=break_frame + 1,
+                end_frame=end_frame,
+                object_status=1,
+                operation_note=f"break_from_{break_frame + 1}_to_{end_frame}"
+            )
+
+
+        return {
+            "old_object_id": object_id,
+            "new_object_id": new_object_id,
+            "old_range": f"{start_frame}-{break_frame}",
+            "new_range": f"{break_frame + 1}-{end_frame}",
+            "rows_updated_in_frame_object": rows_updated,
+        }
 
 
 class SwapObjectSerializer(serializers.Serializer):
