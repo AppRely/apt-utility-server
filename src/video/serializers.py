@@ -1273,132 +1273,109 @@ class SwapObjectSerializer(serializers.Serializer):
         }
 
 
-# class DeleteObjectSerializer(serializers.Serializer):
-#     object_id = serializers.IntegerField(required=True)
-#     start_frame = serializers.IntegerField(required=True)
-#     end_frame = serializers.IntegerField(required=True)
+class DeleteObjectSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(required=True)
+    start_frame = serializers.IntegerField(required=True)
+    end_frame = serializers.IntegerField(required=True)
 
-#     # ---------------------------
-#     # VALIDATION
-#     # ---------------------------
-#     def validate(self, data):
-#         project_id = self.context["project_id"]
-#         object_id = data["object_id"]
-#         start_frame = data["start_frame"]
-#         end_frame = data["end_frame"]
+    # ---------------------------
+    # VALIDATION
+    # ---------------------------
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        object_id = data["object_id"]
+        start_frame = data["start_frame"]
+        end_frame = data["end_frame"]
 
-#         # 1️ Project validation
-#         if not Project.objects.filter(project_id=project_id).exists():
-#             raise serializers.ValidationError("Invalid project_id")
+        # 1️ Project validation
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError("Invalid project_id")
 
-#         # 2️ Frame range validation
-#         if start_frame > end_frame:
-#             raise serializers.ValidationError(
-#                 "start_frame must be less than or equal to end_frame"
-#             )
+        # 2️ Frame range validation
+        if start_frame > end_frame:
+            raise serializers.ValidationError(
+                "start_frame must be less than or equal to end_frame"
+            )
 
-#         # # 3️ObjectTrack validation (ACTIVE CHECK)
-#         # try:
-#         #     obj_track = ObjectTrack.objects.get(
-#         #         project_id_id=project_id,
-#         #         object_id=object_id
-#         #     )
-#         # except ObjectTrack.DoesNotExist:
-#         #     raise serializers.ValidationError("Object not found in object_track")
+        # 3️ObjectTrack validation (ACTIVE CHECK)
+        # try:
+        #     obj_track = ObjectTrack.objects.get(
+        #         project_id_id=project_id,
+        #         object_id=object_id
+        #     )
+        # except ObjectTrack.DoesNotExist:
+        #     raise serializers.ValidationError("Object not found in object_track")
 
-#         try:
-#             obj_track = ObjectLifecycleService.get_active_object(
-#                 project_id=project_id,
-#                 object_id=object_id
-#             )
-#         except ObjectTrack.DoesNotExist:
-#             raise serializers.ValidationError("Active object not found")
+        try:
+            obj_track = ObjectLifecycleService.get_active_object(
+                project_id=project_id,
+                object_id=object_id
+            )
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError("Active object not found")
 
-#         # IMPORTANT CHECK
-#         # if obj_track.object_status != 1:
-#         #     raise serializers.ValidationError(
-#         #         "Object is already inactive. No delete operation performed."
-#         #     )
+        # IMPORTANT CHECK
+        # if obj_track.object_status != 1:
+        #     raise serializers.ValidationError(
+        #         "Object is already inactive. No delete operation performed."
+        #     )
 
-#         # Range must lie inside lifecycle
-#         if start_frame < obj_track.start_frame or end_frame > obj_track.end_frame:
-#             raise serializers.ValidationError(
-#                 f"Delete range must be between "
-#                 f"{obj_track.start_frame} and {obj_track.end_frame}"
-#             )
+        # Range must lie inside lifecycle
+        if start_frame < obj_track.start_frame or end_frame > obj_track.end_frame:
+            raise serializers.ValidationError(
+                f"Delete range must be between "
+                f"{obj_track.start_frame} and {obj_track.end_frame}"
+            )
 
-#         data["obj_track"] = obj_track
-#         return data
+        data["obj_track"] = obj_track
+        return data
 
-#     # ---------------------------
-#     # DYNAMIC SLOT DISCOVERY
-#     # ---------------------------
-#     # @staticmethod
-#     # def _get_object_id_fields():
-#     #     return [
-#     #         field.name
-#     #         for field in VideoData._meta.fields
-#     #         if field.name.startswith("object_") and field.name.endswith("_id")
-#     #     ]
+    # ---------------------------
+    # DYNAMIC SLOT DISCOVERY
+    # ---------------------------
+    # @staticmethod
+    # def _get_object_id_fields():
+    #     return [
+    #         field.name
+    #         for field in VideoData._meta.fields
+    #         if field.name.startswith("object_") and field.name.endswith("_id")
+    #     ]
 
-#     # ---------------------------
-#     # CREATE (OPTIMIZED)
-#     # ---------------------------
-#     def create(self, validated_data):
-#         project_id = self.context["project_id"]
+    # ---------------------------
+    # CREATE (OPTIMIZED)
+    # ---------------------------
+    def create(self, validated_data):
+        project_id = self.context["project_id"]
 
-#         object_id = validated_data["object_id"]
-#         start_frame = validated_data["start_frame"]
-#         end_frame = validated_data["end_frame"]
-#         obj_track = validated_data["obj_track"]
+        object_id = validated_data["object_id"]
+        start_frame = validated_data["start_frame"]
+        end_frame = validated_data["end_frame"]
+        obj_track = validated_data["obj_track"]
 
-#         frames_qs = VideoData.objects.filter(
-#             video_id=project_id,
-#             frame_no__gte=start_frame,
-#             frame_no__lte=end_frame
-#         )
+        with transaction.atomic():
+            # In the new schema, deleting an object from a range means 
+            # removing its FrameObject entries.
+            affected_frames, _ = FrameObject.objects.filter(
+                frame__project_id_id=project_id,
+                object_id=object_id,
+                frame__frame_no__gte=start_frame,
+                frame__frame_no__lte=end_frame
+            ).delete()
 
-#         #object_id_fields = self._get_object_id_fields()
-#         # object_id_fields = ObjectSlotAdapter.get_object_id_fields()
+            # UPDATE OBJECT TRACK (single row)
+            # obj_track.object_status = 0
+            # obj_track.operation_note = (
+            #     f"deleted_frames_{start_frame}_to_{end_frame}"
+            # )
+            # obj_track.save(update_fields=["object_status", "operation_note"])
+            ObjectLifecycleService.deactivate_object(
+                obj_track,
+                note=f"deleted_frames_{start_frame}_to_{end_frame}"
+            )
 
-#         with transaction.atomic():
-
-#             # # BUILD SINGLE BULK UPDATE MAP
-#             # update_map = {}
-
-#             # for field in object_id_fields:
-#             #     coord_field = field.replace("_id", "_coordinates")
-
-#             #     update_map[field] = Case(
-#             #         When(**{field: object_id}, then=Value(None)),
-#             #         default=field,
-#             #     )
-
-#             #     update_map[coord_field] = Case(
-#             #         When(**{field: object_id}, then=Value(None)),
-#             #         default=coord_field,
-#             #     )
-
-#             update_map = ObjectSlotAdapter.build_bulk_nullify_map(object_id)
-
-#             # ONE SQL UPDATE
-#             affected_frames = frames_qs.update(**update_map)
-
-#             # UPDATE OBJECT TRACK (single row)
-#             # obj_track.object_status = 0
-#             # obj_track.operation_note = (
-#             #     f"deleted_frames_{start_frame}_to_{end_frame}"
-#             # )
-#             # obj_track.save(update_fields=["object_status", "operation_note"])
-#             ObjectLifecycleService.deactivate_object(
-#                 obj_track,
-#                 note=f"deleted_frames_{start_frame}_to_{end_frame}"
-#             )
-
-
-#         return {
-#             "object_id": object_id,
-#             "deleted_range": f"{start_frame}-{end_frame}",
-#             "frames_affected": affected_frames,
-#             "object_status": 0
-#         }
+        return {
+            "object_id": object_id,
+            "deleted_range": f"{start_frame}-{end_frame}",
+            "frames_affected": affected_frames,
+            "object_status": 0
+        }
