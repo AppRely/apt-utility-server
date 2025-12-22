@@ -20,7 +20,7 @@ from django.db.models import Q
 # from .services.object_slot_adapter import ObjectSlotAdapter
 # from .services.object_lifecycle_service import ObjectLifecycleService
 # from .services.frame_object_range_service import FrameObjectRangeService
-# from .services.frame_info_service import FrameInfoService 
+from .services.frame_info_service import FrameInfoService 
 from .services.project_upload_service import ProjectUploadService
 # from .models import Project, VideoData, ObjectTrack
 
@@ -497,85 +497,85 @@ class ProjectSerializer(serializers.ModelSerializer):
 #         }
 
 
-# class FrameInfoSerializer(serializers.Serializer):
-#     """
-#     Serializer to handle fetching frame information by video ID and frame number.
-#     Returns all tracking data for the specified frame.
-#     """
-#     video = serializers.IntegerField(required=True, help_text="Video ID")
-#     frame = serializers.IntegerField(required=True, help_text="Frame number")
+class FrameInfoSerializer(serializers.Serializer):
+    """
+    Serializer to handle fetching frame information by video ID and frame number.
+    Returns all tracking data for the specified frame.
+    """
+    video = serializers.IntegerField(required=True, help_text="Video ID")
+    frame = serializers.IntegerField(required=True, help_text="Frame number")
 
-#     def validate(self, attrs):
-#         video_id = attrs.get('video')
-#         frame_num = attrs.get('frame')
+    def validate(self, attrs):
+        video_id = attrs.get('video')
+        frame_num = attrs.get('frame')
 
-#         # Validate that frame number is non-negative
-#         if frame_num < 0:
-#             raise serializers.ValidationError({"frame": "Frame number must be non-negative"})
+        # Validate that frame number is non-negative
+        if frame_num < 0:
+            raise serializers.ValidationError({"frame": "Frame number must be non-negative"})
 
-#         # Check if video exists in Project table
-#         if not Project.objects.filter(project_id=video_id).exists():
-#             raise serializers.ValidationError({"video": f"Video with ID {video_id} does not exist"})
+        # Check if video exists in Project table
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video": f"Video with ID {video_id} does not exist"})
 
-#         # Check if frame exists in VideoData table
-#         # if not VideoData.objects.filter(video_id=video_id, frame_no=frame_num).exists():
-#         #     raise serializers.ValidationError({"frame": f"Frame {frame_num} not found for video {video_id}"})
+        # Check if frame exists in VideoData table
+        # if not VideoData.objects.filter(video_id=video_id, frame_no=frame_num).exists():
+        #     raise serializers.ValidationError({"frame": f"Frame {frame_num} not found for video {video_id}"})
 
-#         return attrs
+        return attrs
 
-#     def get_data(self):
-#         """
-#         Fetch frame data from the database and return structured response.
-#         """
-#         # validated_data = self.validated_data
-#         # video_id = validated_data['video']
-#         # frame_num = validated_data['frame']
+    def get_data(self):
+        """
+        Fetch frame data from the database and return structured response.
+        """
+        # validated_data = self.validated_data
+        # video_id = validated_data['video']
+        # frame_num = validated_data['frame']
 
-#         # # Query the database for the specific frame (already validated to exist)
-#         # frame_data = VideoData.objects.get(video_id=video_id, frame_no=frame_num)
+        # # Query the database for the specific frame (already validated to exist)
+        # frame_data = VideoData.objects.get(video_id=video_id, frame_no=frame_num)
 
-#         # # Extract frame-level data
-#         # confs = frame_data.confidence if frame_data.confidence else []
-#         # tags = frame_data.tag if frame_data.tag else []
-#         # timestamps = frame_data.timestamp if frame_data.timestamp else []
+        # # Extract frame-level data
+        # confs = frame_data.confidence if frame_data.confidence else []
+        # tags = frame_data.tag if frame_data.tag else []
+        # timestamps = frame_data.timestamp if frame_data.timestamp else []
 
-#         # # Build objects list
-#         # objects = []
-#         # for i in range(1, 11):  # 10 object slots
-#         #     obj_id = getattr(frame_data, f'object_{i}_id')
-#         #     coords = getattr(frame_data, f'object_{i}_coordinates')
+        # # Build objects list
+        # objects = []
+        # for i in range(1, 11):  # 10 object slots
+        #     obj_id = getattr(frame_data, f'object_{i}_id')
+        #     coords = getattr(frame_data, f'object_{i}_coordinates')
             
             
-#         #     if obj_id is not None:
-#         #         track = ObjectTrack.objects.filter(
-#         #         project_id_id=video_id,
-#         #         object_id=obj_id
-#         #     ).first()
+        #     if obj_id is not None:
+        #         track = ObjectTrack.objects.filter(
+        #         project_id_id=video_id,
+        #         object_id=obj_id
+        #     ).first()
 
-#         #         objects.append({
-#         #             "object_id": obj_id,
-#         #             "coordinates": coords,
-#         #             "start_frame": track.start_frame if track else None,
-#         #             "end_frame": track.end_frame if track else None,
-#         #             # "confidence": confs[idx] if idx < len(confs) else None,
-#         #             # "tag": tags[idx] if idx < len(tags) else None,
-#         #             # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
-#         #             })
+        #         objects.append({
+        #             "object_id": obj_id,
+        #             "coordinates": coords,
+        #             "start_frame": track.start_frame if track else None,
+        #             "end_frame": track.end_frame if track else None,
+        #             # "confidence": confs[idx] if idx < len(confs) else None,
+        #             # "tag": tags[idx] if idx < len(tags) else None,
+        #             # "timestamp": timestamps[idx] if idx < len(timestamps) else None,
+        #             })
 
-#         data = self.validated_data
+        data = self.validated_data
 
-#         return FrameInfoService.fetch(
-#             video_id=data["video"],
-#             frame_no=data["frame"],
-#         )
-#         # Return structured response
-#         # return {
-#         #     "video_id": data["video"],
-#         #     "frame_number": data["frame"],
-#         #     # "frame_timestamp": frame_data.frame_timestamp,
-#         #     # "trk_timestamp": frame_data.trk_timestamp,
-#         #     # "objects": objects,
-#         # }
+        return FrameInfoService.fetch(
+            video_id=data["video"],
+            frame_no=data["frame"],
+        )
+        # Return structured response
+        # return {
+        #     "video_id": data["video"],
+        #     "frame_number": data["frame"],
+        #     # "frame_timestamp": frame_data.frame_timestamp,
+        #     # "trk_timestamp": frame_data.trk_timestamp,
+        #     # "objects": objects,
+        # }
 
 
 # class ListUniqueIdsSerializer(serializers.Serializer):

@@ -23,7 +23,7 @@ from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
     # FrameObjectRangeSerializer,
-    # FrameInfoSerializer,
+    FrameInfoSerializer,
     ProjectSerializer,
     # ListUniqueIdsSerializer,
     # ObjectTrackDetailsSerializer,
@@ -76,22 +76,22 @@ class VideoViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [AllowAny]
 
-    def _has_frame_data(self, video_id, frame_no):
-        """Check if frame exists in VideoData."""
-        return VideoData.objects.filter(
-            video_id=video_id,
-            frame_no=frame_no
-        ).exists()
+    # def _has_frame_data(self, video_id, frame_no):
+    #     """Check if frame exists in VideoData."""
+    #     return VideoData.objects.filter(
+    #         video_id=video_id,
+    #         frame_no=frame_no
+    #     ).exists()
 
-    def _get_previous_valid_frame(self, video_id, frame_no):
-        """Return nearest previous valid frame, else None."""
-        row = (
-            VideoData.objects
-            .filter(video_id=video_id, frame_no__lt=frame_no)
-            .order_by('-frame_no')
-            .first()
-        )
-        return row.frame_no if row else None
+    # def _get_previous_valid_frame(self, video_id, frame_no):
+    #     """Return nearest previous valid frame, else None."""
+    #     row = (
+    #         VideoData.objects
+    #         .filter(video_id=video_id, frame_no__lt=frame_no)
+    #         .order_by('-frame_no')
+    #         .first()
+    #     )
+    #     return row.frame_no if row else None
 
     def _stream_video_with_range(self, file_path, range_header):
         """
@@ -464,112 +464,112 @@ class VideoViewSet(viewsets.ModelViewSet):
     #         )
 
     
-    # @swagger_auto_schema(
-    #     operation_description="Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.",
-    #     manual_parameters=[
-    #         openapi.Parameter(
-    #             'video',
-    #             openapi.IN_QUERY,
-    #             type=openapi.TYPE_INTEGER,
-    #             required=True,
-    #             description='Video ID (project_id)',
-    #         ),
-    #         openapi.Parameter(
-    #             'frame',
-    #             openapi.IN_QUERY,
-    #             type=openapi.TYPE_INTEGER,
-    #             required=True,
-    #             description='Frame number',
-    #         ),
-    #     ],
-    #     pagination_class=None,
-    #     responses={
-    #         200: 'JSON with frame data and tracking information', 
-    #         400: 'Validation error',
-    #         404: 'No valid previous frame found',
-    #         500: 'Server error'
-    #     },
-    # )
-    # @action(detail=False, methods=['get'], url_path='frame')
-    # def get_frame_info(self, request):
-    #     """
-    #     GET /api/v1/frame?video=ID&frame=NUM
-    #     Retrieve tracking data for a single frame from the database.
+    @swagger_auto_schema(
+        operation_description="Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.",
+        manual_parameters=[
+            openapi.Parameter(
+                'video',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Video ID (project_id)',
+            ),
+            openapi.Parameter(
+                'frame',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Frame number',
+            ),
+        ],
+        pagination_class=None,
+        responses={
+            200: 'JSON with frame data and tracking information', 
+            400: 'Validation error',
+            404: 'No valid previous frame found',
+            500: 'Server error'
+        },
+    )
+    @action(detail=False, methods=['get'], url_path='frame')
+    def get_frame_info(self, request):
+        """
+        GET /api/v1/frame?video=ID&frame=NUM
+        Retrieve tracking data for a single frame from the database.
 
-    #     This endpoint fetches all stored tracking information for a given
-    #     video and frame number. If the requested frame is missing, the system
-    #     automatically falls back to the nearest previous valid frame.
+        This endpoint fetches all stored tracking information for a given
+        video and frame number. If the requested frame is missing, the system
+        automatically falls back to the nearest previous valid frame.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request containing `video` and
-    #             `frame` query parameters.
+        Args:
+            request (Request): Incoming HTTP request containing `video` and
+                `frame` query parameters.
 
-    #     Returns:
-    #         Response: Tracking data for the resolved frame.
-    #     """
-    #     try:
-    #         serializer = FrameInfoSerializer(data=request.query_params)
-    #         serializer.is_valid(raise_exception=True)
+        Returns:
+            Response: Tracking data for the resolved frame.
+        """
+        try:
+            serializer = FrameInfoSerializer(data=request.query_params)
+            serializer.is_valid(raise_exception=True)
             
-    #         video_id = serializer.validated_data['video']
-    #         frame_no = serializer.validated_data['frame']
+            # video_id = serializer.validated_data['video']
+            # frame_no = serializer.validated_data['frame']
 
-    #         max_row = (
-    #             VideoData.objects
-    #             .filter(video_id=video_id)
-    #             .order_by("-frame_no")
-    #             .first()
-    #         )
+            # max_row = (
+            #     VideoData.objects
+            #     .filter(video_id=video_id)
+            #     .order_by("-frame_no")
+            #     .first()
+            # )
 
-    #         if max_row and frame_no > max_row.frame_no:
-    #             return Response(
-    #                 {
-    #                     "status": "error",
-    #                     "message": "Requested frame is out of range",
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND,
-    #             )
+            # if max_row and frame_no > max_row.frame_no:
+            #     return Response(
+            #         {
+            #             "status": "error",
+            #             "message": "Requested frame is out of range",
+            #         },
+            #         status=status.HTTP_404_NOT_FOUND,
+            #     )
 
-    #         if not self._has_frame_data(video_id, frame_no):
-    #             fallback = self._get_previous_valid_frame(video_id, frame_no)
-    #             if fallback is None:
-    #                 return Response(
-    #                     {
-    #                         "status": "error",
-    #                         "message": "No valid previous frame found",
-    #                     },
-    #                     status=status.HTTP_404_NOT_FOUND,
-    #                 )
-    #             serializer.validated_data["frame"] = fallback
+            # if not self._has_frame_data(video_id, frame_no):
+            #     fallback = self._get_previous_valid_frame(video_id, frame_no)
+            #     if fallback is None:
+            #         return Response(
+            #             {
+            #                 "status": "error",
+            #                 "message": "No valid previous frame found",
+            #             },
+            #             status=status.HTTP_404_NOT_FOUND,
+            #         )
+            #     serializer.validated_data["frame"] = fallback
 
-    #         payload = serializer.get_data()
+            payload = serializer.get_data()
 
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "data": payload,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid query parameters",
-    #                 "errors": ve.detail,
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid query parameters",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    #     except Exception:
-    #         logger.error("Error fetching frame info", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while fetching frame data",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception:
+            logger.error("Error fetching frame info", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while fetching frame data",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
     # @swagger_auto_schema(
