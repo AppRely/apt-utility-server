@@ -727,146 +727,152 @@ class VideoViewSet(viewsets.ModelViewSet):
     #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     #         )
 
-    # @swagger_auto_schema(
-    #     operation_description="Stream the project video file with HTTP Range support.",
-    #     responses=
-    #     {
-    #         206: 'Partial Content', 
-    #         200: 'Full Content', 
-    #         404: 'Not Found',
-    #         500: 'Server Error',
-    #     },
-    # )
-    # @action(detail=True, methods=['get'], url_path='project-stream')
-    # def project_stream(self, request, pk=None):
-    #     """
-    #     GET /videos/{id}/project-stream/
+    ########################
+    #stream video logic
+    ########################
 
-    #     Stream a project video file with HTTP Range support.
-    #     Supports partial content delivery to enable efficient seeking
-    #     and playback in video players.
+    @swagger_auto_schema(
+        operation_description="Stream the project video file with HTTP Range support.",
+        responses=
+        {
+            206: 'Partial Content', 
+            200: 'Full Content', 
+            404: 'Not Found',
+            500: 'Server Error',
+        },
+    )
+    @action(detail=True, methods=['get'], url_path='project-stream')
+    def project_stream(self, request, pk=None):
+        """
+        GET /videos/{id}/project-stream/
 
-    #     Args:
-    #         request (Request): Incoming HTTP request.
-    #         pk (int): Project identifier.
-    #     Returns:
-    #         HttpResponse: Video stream response.
-    #     """
-    #     try:
-    #         project = get_object_or_404(Project, pk=pk)
+        Stream a project video file with HTTP Range support.
+        Supports partial content delivery to enable efficient seeking
+        and playback in video players.
+
+        Args:
+            request (Request): Incoming HTTP request.
+            pk (int): Project identifier.
+        Returns:
+            HttpResponse: Video stream response.
+        """
+        try:
+            project = get_object_or_404(Project, pk=pk)
             
-    #         video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
+            video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
 
-    #         if not project.video_name:
-    #             return Response(
-    #             {
-    #                 "status": "error", 
-    #                 "message": "Video filename missing in project"
-    #             },
-    #             status=status.HTTP_404_NOT_FOUND,
-    #         )
+            if not project.video_name:
+                return Response(
+                {
+                    "status": "error", 
+                    "message": "Video filename missing in project"
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-    #         file_path = os.path.join(video_folder, project.video_name)
+            file_path = os.path.join(video_folder, project.video_name)
 
-    #         if not os.path.exists(file_path):
-    #             return Response(
-    #                 {
-    #                     "status": "error", 
-    #                     "message": "Video file not found on server"
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND,
-    #             )
+            if not os.path.exists(file_path):
+                return Response(
+                    {
+                        "status": "error", 
+                        "message": "Video file not found on server"
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-    #         range_header = request.headers.get('Range')
-    #         if range_header:
-    #             return self._stream_video_with_range(file_path, range_header)
+            range_header = request.headers.get('Range')
+            if range_header:
+                return self._stream_video_with_range(file_path, range_header)
             
-    #         response = FileResponse(
-    #             open(file_path, 'rb'), 
-    #             content_type='video/mp4'
-    #         )
-    #         response['Content-Length'] = str(os.path.getsize(file_path))
-    #         response['Accept-Ranges'] = 'bytes'
-    #         response['Cache-Control'] = 'public, max-age=3600'
-    #         return response
+            response = FileResponse(
+                open(file_path, 'rb'), 
+                content_type='video/mp4'
+            )
+            response['Content-Length'] = str(os.path.getsize(file_path))
+            response['Accept-Ranges'] = 'bytes'
+            response['Cache-Control'] = 'public, max-age=3600'
+            return response
             
-    #     except Exception:
-    #         logger.error("Error streaming video file", exc_info=True)
-    #         return Response(
-    #         {
-    #             "status": "error", 
-    #             "message": "Something went wrong while streaming the video"
-    #         },
-    #         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #     )
+        except Exception:
+            logger.error("Error streaming video file", exc_info=True)
+            return Response(
+            {
+                "status": "error", 
+                "message": "Something went wrong while streaming the video"
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
+    ########################
+    #stream trk logic
+    ########################
+    @swagger_auto_schema(
+        operation_description="Stream/download the raw TRK file content for the project.",
+        responses={
+            200: 'TRK file', 
+            404: 'TRK file not found',
+            500: 'Server error'
+            },
+    )
+    @action(detail=True, methods=['get'], url_path='project-stream-trk')
+    def project_stream_trk(self, request, pk=None):
+        """
+        GET /videos/{id}/project-stream-trk/ 
 
-    # @swagger_auto_schema(
-    #     operation_description="Stream/download the raw TRK file content for the project.",
-    #     responses={
-    #         200: 'TRK file', 
-    #         404: 'TRK file not found',
-    #         500: 'Server error'
-    #         },
-    # )
-    # @action(detail=True, methods=['get'], url_path='project-stream-trk')
-    # def project_stream_trk(self, request, pk=None):
-    #     """
-    #     GET /videos/{id}/project-stream-trk/ 
+        Stream or download the raw TRK file associated with a project.
+        The file is returned as an attachment for download or inspection.
 
-    #     Stream or download the raw TRK file associated with a project.
-    #     The file is returned as an attachment for download or inspection.
+        Args:
+            request (Request): Incoming HTTP request.
+            pk (int): Project identifier.
+        Returns:
+            FileResponse: TRK file stream.
+        """
+        logger.info(f"Streaming TRK for project {pk}")
+        try:
+            project = get_object_or_404(Project, pk=pk)
 
-    #     Args:
-    #         request (Request): Incoming HTTP request.
-    #         pk (int): Project identifier.
-    #     Returns:
-    #         FileResponse: TRK file stream.
-    #     """
-    #     logger.info(f"Streaming TRK for project {pk}")
-    #     try:
-    #         project = get_object_or_404(Project, pk=pk)
+            if not project.trk_file_name:
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "TRK file not uploaded for this project",
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-    #         if not project.trk_file_name:
-    #             return Response(
-    #                 {
-    #                     "status": "error",
-    #                     "message": "TRK file not uploaded for this project",
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND,
-    #             )
+            track_folder = os.path.join(settings.MEDIA_ROOT, "track_folder")
+            trk_path = os.path.join(track_folder, project.trk_file_name)
 
-    #         track_folder = os.path.join(settings.MEDIA_ROOT, "track_folder")
-    #         trk_path = os.path.join(track_folder, project.trk_file_name)
-
-    #         if not os.path.exists(trk_path):
-    #             return Response(
-    #                 {
-    #                     "status": "error",
-    #                     "message": "TRK file not found on server",
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND,
-    #             )
+            if not os.path.exists(trk_path):
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "TRK file not found on server",
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             
-    #         response = FileResponse(
-    #             open(trk_path, 'rb'),
-    #             as_attachment=True,
-    #             filename=os.path.basename(trk_path),
-    #             content_type="application/octet-stream",
-    #         )
-    #         response['Cache-Control'] = 'public, max-age=3600'
-    #         return response
+            response = FileResponse(
+                open(trk_path, 'rb'),
+                as_attachment=True,
+                filename=os.path.basename(trk_path),
+                content_type="application/octet-stream",
+            )
+            response['Cache-Control'] = 'public, max-age=3600'
+            return response
 
-    #     except Exception:
-    #         logger.error("Error streaming TRK file", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while streaming the TRK file",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
-    
+        except Exception:
+            logger.error("Error streaming TRK file", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while streaming the TRK file",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+ 
 
     # @swagger_auto_schema(
     #     operation_description="Get list of all unique object IDs for the project.",
