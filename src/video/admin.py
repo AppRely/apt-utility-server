@@ -32,7 +32,7 @@ class ProjectAdmin(BaseAdmin):
 class VideoFrameAdmin(BaseAdmin):
     list_display = (
         "id",
-        "project_id",
+        "get_project_name",
         "frame_no",
         "frame_timestamp",
         "trk_timestamp",
@@ -42,11 +42,17 @@ class VideoFrameAdmin(BaseAdmin):
     list_filter = ("project_id__project_id",)
     readonly_fields = ()
 
+    def get_project_name(self, obj):
+        return obj.project_id.project_name
+    get_project_name.short_description = "Project Name"
+    get_project_name.admin_order_field = "project_id__project_name"
+
 @admin.register(FrameObject)
 class FrameObjectAdmin(BaseAdmin):
     list_display = (
         "id",
-        "frame",
+        "get_project_name",
+        "get_frame_number",
         "object_id",
         "coordinates",
         "confidence",
@@ -55,8 +61,18 @@ class FrameObjectAdmin(BaseAdmin):
     )
 
     search_fields = ("frame__id", "object_id")
-    list_filter = ("object_id",)
+    list_filter = ("frame__project_id__project_id", "object_id")
     readonly_fields = ()
+
+    def get_project_name(self, obj):
+        return obj.frame.project_id.project_name
+    get_project_name.short_description = "Project Name"
+    get_project_name.admin_order_field = "frame__project_id__project_name"
+
+    def get_frame_number(self, obj):
+        return obj.frame.frame_no
+    get_frame_number.short_description = "Frame Number"
+    get_frame_number.admin_order_field = "frame__frame_no"
 
 @admin.register(ObjectTrack)
 class ObjectTrackAdmin(BaseAdmin):

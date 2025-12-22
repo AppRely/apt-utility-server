@@ -48,7 +48,7 @@ class VideoFrame(models.Model):
         ]
 
     def __str__(self):
-        return f"Project {self.project_id_id} | Frame {self.frame_no}"
+        return f"{self.project_id.project_name} | Frame {self.frame_no}"
 
 
 class FrameObject(models.Model):

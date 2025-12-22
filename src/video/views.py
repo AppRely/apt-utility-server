@@ -22,7 +22,7 @@ from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog, 
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
-    # FrameObjectRangeSerializer,
+    FrameObjectRangeSerializer,
     FrameInfoSerializer,
     ProjectSerializer,
     # ListUniqueIdsSerializer,
@@ -76,22 +76,22 @@ class VideoViewSet(viewsets.ModelViewSet):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [AllowAny]
 
-    # def _has_frame_data(self, video_id, frame_no):
-    #     """Check if frame exists in VideoData."""
-    #     return VideoData.objects.filter(
-    #         video_id=video_id,
-    #         frame_no=frame_no
-    #     ).exists()
+    def _has_frame_data(self, video_id, frame_no):
+        """Check if frame exists in VideoFrame."""
+        return VideoFrame.objects.filter(
+            project_id=video_id,
+            frame_no=frame_no
+        ).exists()
 
-    # def _get_previous_valid_frame(self, video_id, frame_no):
-    #     """Return nearest previous valid frame, else None."""
-    #     row = (
-    #         VideoData.objects
-    #         .filter(video_id=video_id, frame_no__lt=frame_no)
-    #         .order_by('-frame_no')
-    #         .first()
-    #     )
-    #     return row.frame_no if row else None
+    def _get_previous_valid_frame(self, video_id, frame_no):
+        """Return nearest previous valid frame, else None."""
+        row = (
+            VideoFrame.objects
+            .filter(project_id=video_id, frame_no__lt=frame_no)
+            .order_by('-frame_no')
+            .first()
+        )
+        return row.frame_no if row else None
 
     def _stream_video_with_range(self, file_path, range_header):
         """
@@ -340,128 +340,128 @@ class VideoViewSet(viewsets.ModelViewSet):
     #         return JsonResponse({"error": f"Failed to get TRK data: {str(e)}"}, status=500)
 
     
-    # @swagger_auto_schema(
-    #     operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
-    #     manual_parameters=[
-    #         openapi.Parameter(
-    #             'start',
-    #             openapi.IN_QUERY,
-    #             type=openapi.TYPE_INTEGER,
-    #             required=True,
-    #             description='Start frame id (inclusive)',
-    #         ),
-    #         openapi.Parameter(
-    #             'end',
-    #             openapi.IN_QUERY,
-    #             type=openapi.TYPE_INTEGER,
-    #             required=True,
-    #             description='End frame id (inclusive, max span 150)',
-    #         ),
-    #     ],
-    #     responses={
-    #         200: 'JSON payload for the requested frame range',
-    #         400: 'Validation error or frame out of range',
-    #         404: 'No valid previous frame found',
-    #         500: 'Server error'
-    #         },
-    # )
-    # @action(detail=True, methods=['get'], url_path='frame-object-range')
-    # def frame_object_range(self, request, pk=None):
-    #     """
-    #     GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
-    #     Retrieve object tracking data for a contiguous range of frames.
+    @swagger_auto_schema(
+        operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
+        manual_parameters=[
+            openapi.Parameter(
+                'start',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Start frame id (inclusive)',
+            ),
+            openapi.Parameter(
+                'end',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='End frame id (inclusive, max span 150)',
+            ),
+        ],
+        responses={
+            200: 'JSON payload for the requested frame range',
+            400: 'Validation error or frame out of range',
+            404: 'No valid previous frame found',
+            500: 'Server error'
+            },
+    )
+    @action(detail=True, methods=['get'], url_path='frame-object-range')
+    def frame_object_range(self, request, pk=None):
+        """
+        GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
+        Retrieve object tracking data for a contiguous range of frames.
 
-    #     This endpoint returns object coordinates and metadata for all frames
-    #     between the given start and end frame (inclusive). If frame data is
-    #     missing within the requested range, the nearest previous valid frame
-    #     is used as a fallback.
+        This endpoint returns object coordinates and metadata for all frames
+        between the given start and end frame (inclusive). If frame data is
+        missing within the requested range, the nearest previous valid frame
+        is used as a fallback.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request containing `start` and `end`
-    #             query parameters.
-    #         pk (int): Video identifier.
+        Args:
+            request (Request): Incoming HTTP request containing `start` and `end`
+                query parameters.
+            pk (int): Video identifier.
 
-    #     Returns:
-    #         Response: Object-wise tracking data for the requested frame range.
-    #     """
-    #     try:
-    #         data = request.query_params.copy()
-    #         data['video_id'] = pk
+        Returns:
+            Response: Object-wise tracking data for the requested frame range.
+        """
+        try:
+            data = request.query_params.copy()
+            data['video_id'] = pk
             
-    #         serializer = FrameObjectRangeSerializer(data=data)
-    #         serializer.is_valid(raise_exception=True)
+            serializer = FrameObjectRangeSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
 
-    #         validated = serializer.validated_data
-    #         video_id = validated["video_id"]
-    #         start = validated["start"]
-    #         end = validated["end"]
+            validated = serializer.validated_data
+            video_id = validated["video_id"]
+            start = validated["start"]
+            end = validated["end"]
         
-    #         max_row = (
-    #             VideoData.objects
-    #             .filter(video_id=video_id)
-    #             .order_by('-frame_no')
-    #             .first()
-    #         )
-    #         if max_row and end > max_row.frame_no:
-    #             return Response(
-    #                 {
-    #                     "status": "error",
-    #                     "message": "Requested frame range is out of bounds",
-    #                 },
-    #                 status=status.HTTP_404_NOT_FOUND,
-    #             )
+            max_row = (
+                VideoFrame.objects
+                .filter(project_id=video_id)
+                .order_by('-frame_no')
+                .first()
+            )
+            if max_row and end > max_row.frame_no:
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "Requested frame range is out of bounds",
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-    #         existing_frames = set(
-    #             VideoData.objects.filter(
-    #                 video_id=video_id,
-    #                 frame_no__gte=start,
-    #                 frame_no__lte=end,
-    #             ).values_list("frame_no", flat=True)
-    #         )
+            existing_frames = set(
+                VideoFrame.objects.filter(
+                    project_id=video_id,
+                    frame_no__gte=start,
+                    frame_no__lte=end,
+                ).values_list("frame_no", flat=True)
+            )
 
-    #         missing_frames = [
-    #             f for f in range(start, end + 1)
-    #             if f not in existing_frames
-    #         ]
+            missing_frames = [
+                f for f in range(start, end + 1)
+                if f not in existing_frames
+            ]
 
-    #         fallback_frames = []
-    #         for frame in missing_frames:
-    #             prev = self._get_previous_valid_frame(video_id, frame)
-    #             if prev is not None:
-    #                 fallback_frames.append(prev)
+            fallback_frames = []
+            for frame in missing_frames:
+                prev = self._get_previous_valid_frame(video_id, frame)
+                if prev is not None:
+                    fallback_frames.append(prev)
 
-    #         if fallback_frames:
-    #             serializer.extra_frames = fallback_frames
+            if fallback_frames:
+                serializer.extra_frames = fallback_frames
 
-    #         payload = serializer.get_data()
+            payload = serializer.get_data()
 
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "data": payload,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
+            )
            
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid query parameters",
-    #                 "errors": ve.detail,
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid query parameters",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    #     except Exception:
-    #         logger.error("Error fetching frame object range", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while fetching frame data",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception:
+            logger.error("Error fetching frame object range", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while fetching frame data",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     
     @swagger_auto_schema(
