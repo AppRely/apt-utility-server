@@ -24,7 +24,7 @@ from .serializers import (
     VideoSerializer, 
     # FrameObjectRangeSerializer,
     # FrameInfoSerializer,
-    # ProjectSerializer,
+    ProjectSerializer,
     # ListUniqueIdsSerializer,
     # ObjectTrackDetailsSerializer,
     # LinkObjectSerializer,
@@ -683,49 +683,49 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    # @swagger_auto_schema(
-    # operation_description="Get list of all in-progress projects with essential details",
-    # responses={
-    #     200: ProjectSerializer(many=True),
-    #     500: "Server error"
-    # },
-    # )
-    # @action(detail=False, methods=['get'], url_path='project-list')
-    # def project_list(self, request):
-    #     """
-    #     GET /videos/project-list/
+    @swagger_auto_schema(
+        operation_description="Get list of all in-progress projects with essential details",
+        responses={
+            200: ProjectSerializer(many=True),
+            500: "Server error"
+        },
+    )
+    @action(detail=False, methods=['get'], url_path='project-list')
+    def project_list(self, request):
+        """
+        GET /videos/project-list/
 
-    #     Retrieve a list of projects with active or completed status.
-    #     Returns projects that are currently in progress or completed,
-    #     ordered by project identifier.
+        Retrieve a list of projects with active or completed status.
+        Returns projects that are currently in progress or completed,
+        ordered by project identifier.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request.
-    #     Returns:
-    #         Response: List of serialized project records.
-    #     """
-    #     try:
+        Args:
+            request (Request): Incoming HTTP request.
+        Returns:
+            Response: List of serialized project records.
+        """
+        try:
 
-    #         projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
+            projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
 
-    #         serializer = ProjectSerializer(projects, many=True)
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "data": serializer.data,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
+            serializer = ProjectSerializer(projects, many=True)
+            return Response(
+                {
+                    "status": "success",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
             
-    #     except Exception:
-    #         logger.error("Failed to fetch projects", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Failed to fetch projects",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception:
+            logger.error("Failed to fetch projects", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Failed to fetch projects",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     ########################
     #stream video logic

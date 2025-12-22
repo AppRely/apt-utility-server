@@ -364,25 +364,25 @@ class ProjectUploadSerializer(serializers.Serializer):
         )
 
 
-# class ProjectSerializer(serializers.ModelSerializer):
-#     """
-#     Serializer for listing projects with essential fields.
-#     """
-#     #video_file = serializers.CharField(source='video_name', read_only=True)
-#     class Meta:
-#         model = Project
-#         fields = [
-#             "project_id",
-#             "project_name",
-#             "video_id",
-#             "video_name",
-#             "video_path", 
-#             "trk_file_name",
-#             "trk_file_path",
-#             "project_status",
-#             "created_at",
-#             "updated_at",
-#         ]
+class ProjectSerializer(serializers.ModelSerializer):
+    """
+    Serializer for listing projects with essential fields.
+    """
+    #video_file = serializers.CharField(source='video_name', read_only=True)
+    class Meta:
+        model = Project
+        fields = [
+            "project_id",
+            "project_name",
+            # "video_id",
+            "video_name",
+            "video_path", 
+            "trk_file_name",
+            "trk_file_path",
+            "project_status",
+            "created_at",
+            "updated_at",
+        ]
 
 # # =============================
 # # FRAME SERIALIZERS
