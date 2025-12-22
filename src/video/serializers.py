@@ -18,7 +18,7 @@ from django.db.models import Case, When, Value, IntegerField
 from rest_framework import serializers
 from django.db.models import Q
 # from .services.object_slot_adapter import ObjectSlotAdapter
-# from .services.object_lifecycle_service import ObjectLifecycleService
+from .services.object_lifecycle_service import ObjectLifecycleService
 from .services.frame_object_range_service import FrameObjectRangeService
 from .services.frame_info_service import FrameInfoService 
 from .services.project_upload_service import ProjectUploadService
@@ -578,106 +578,106 @@ class FrameInfoSerializer(serializers.Serializer):
         # }
 
 
-# class ListUniqueIdsSerializer(serializers.Serializer):
-#     def validate(self, data):
-#         project_id = self.context.get("project_id")
+class ListUniqueIdsSerializer(serializers.Serializer):
+    def validate(self, data):
+        project_id = self.context.get("project_id")
 
-#         if not project_id:
-#             raise serializers.ValidationError({"project_id": "project_id is required"})
+        if not project_id:
+            raise serializers.ValidationError({"project_id": "project_id is required"})
 
-#         if not Project.objects.filter(project_id=project_id).exists():
-#             raise serializers.ValidationError({"project_id": "Invalid project ID"})
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project ID"})
 
-#         return data
+        return data
 
-#     def get_all_ids(self):
-#         project_id = self.context.get("project_id")
+    def get_all_ids(self):
+        project_id = self.context.get("project_id")
 
-#         ids = (
-#             ObjectTrack.objects.filter(project_id_id=project_id,object_status=1)
-#             .order_by("object_id")
-#             .values_list("object_id", flat=True)
-#         )
+        ids = (
+            ObjectTrack.objects.filter(project_id_id=project_id,object_status=1)
+            .order_by("object_id")
+            .values_list("object_id", flat=True)
+        )
 
-#         return {
-#             "project_id": project_id,
-#             "unique_ids": list(ids),
-#         }
-
-
-# class ObjectTrackDetailsSerializer(serializers.Serializer):
-#     object_id = serializers.IntegerField(required=True)
-#     frame = serializers.IntegerField(required=True)
-
-#     def validate(self, data):
-#         project_id = self.context.get("project_id")
-#         # obj_id = data.get("object_id")
-#         frame = data.get("frame")
-
-#         # Validate project exists
-#         if not Project.objects.filter(project_id=project_id).exists():
-#             raise serializers.ValidationError({"project_id": "Invalid project ID"})
-
-#         # Validate frame >= 0
-#         if frame < 0:
-#             raise serializers.ValidationError({"frame": "Frame must be >= 0"})
-
-#         # Validate object exists
-#         # obj = ObjectTrack.objects.filter(project_id_id=project_id, object_id=obj_id).first()
-#         # if not obj:
-#         #     # object doesn't exist at all → mark and continue
-#         #     data["object_missing"] = True
-#         #     return data
-
-#         # pass object row to next method
-#         # data["object_row"] = obj
-
-#         return data
-
-#     def get_object_data(self):
-#         # project_id = self.context.get("project_id")
-#         # obj_id = self.validated_data["object_id"]
-#         # frame = self.validated_data["frame"]
-
-#         # row = self.validated_data.get("object_row")
-
-#         # # Case 1 — Object doesn't exist
-#         # if self.validated_data.get("object_missing"):
-#         #     return {
-#         #         "project_id": project_id,
-#         #         "object_id": obj_id,
-#         #         "message": "Object ID not found in database",
-#         #         "is_active": False
-#         #     }
-
-#         # # Case 2 — Object exists but inactive
-#         # if row.object_status == 0:
-#         #     return {
-#         #         "project_id": project_id,
-#         #         "object_id": obj_id,
-#         #         "message": "Object is inactive",
-#         #         "is_active": False,
-#         #         "operation_note": row.operation_note
-#         #     }
-
-#         # # Case 3 — Active: normal logic
-#         # is_inside = row.start_frame <= frame <= row.end_frame
+        return {
+            "project_id": project_id,
+            "unique_ids": list(ids),
+        }
 
 
-#         # return {
-#         #     "project_id": project_id,
-#         #     "object_id": obj_id,
-#         #     "start_frame": row.start_frame,
-#         #     "end_frame": row.end_frame,
-#         #     "is_inside": is_inside,
-#         #     "object_status": row.object_status,
-#         #     "operation_note": row.operation_note,
-#         # }
-#         return ObjectLifecycleService.fetch(
-#             project_id=self.context["project_id"],
-#             object_id=self.validated_data["object_id"],
-#             frame=self.validated_data["frame"],
-#         )
+class ObjectTrackDetailsSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(required=True)
+    frame = serializers.IntegerField(required=True)
+
+    def validate(self, data):
+        project_id = self.context.get("project_id")
+        # obj_id = data.get("object_id")
+        frame = data.get("frame")
+
+        # Validate project exists
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project ID"})
+
+        # Validate frame >= 0
+        if frame < 0:
+            raise serializers.ValidationError({"frame": "Frame must be >= 0"})
+
+        # Validate object exists
+        # obj = ObjectTrack.objects.filter(project_id_id=project_id, object_id=obj_id).first()
+        # if not obj:
+        #     # object doesn't exist at all → mark and continue
+        #     data["object_missing"] = True
+        #     return data
+
+        # pass object row to next method
+        # data["object_row"] = obj
+
+        return data
+
+    def get_object_data(self):
+        # project_id = self.context.get("project_id")
+        # obj_id = self.validated_data["object_id"]
+        # frame = self.validated_data["frame"]
+
+        # row = self.validated_data.get("object_row")
+
+        # # Case 1 — Object doesn't exist
+        # if self.validated_data.get("object_missing"):
+        #     return {
+        #         "project_id": project_id,
+        #         "object_id": obj_id,
+        #         "message": "Object ID not found in database",
+        #         "is_active": False
+        #     }
+
+        # # Case 2 — Object exists but inactive
+        # if row.object_status == 0:
+        #     return {
+        #         "project_id": project_id,
+        #         "object_id": obj_id,
+        #         "message": "Object is inactive",
+        #         "is_active": False,
+        #         "operation_note": row.operation_note
+        #     }
+
+        # # Case 3 — Active: normal logic
+        # is_inside = row.start_frame <= frame <= row.end_frame
+
+
+        # return {
+        #     "project_id": project_id,
+        #     "object_id": obj_id,
+        #     "start_frame": row.start_frame,
+        #     "end_frame": row.end_frame,
+        #     "is_inside": is_inside,
+        #     "object_status": row.object_status,
+        #     "operation_note": row.operation_note,
+        # }
+        return ObjectLifecycleService.fetch(
+            project_id=self.context["project_id"],
+            object_id=self.validated_data["object_id"],
+            frame=self.validated_data["frame"],
+        )
 
 # # =============================
 # # ACTIVITY SERIALIZERS

@@ -25,8 +25,8 @@ from .serializers import (
     FrameObjectRangeSerializer,
     FrameInfoSerializer,
     ProjectSerializer,
-    # ListUniqueIdsSerializer,
-    # ObjectTrackDetailsSerializer,
+    ListUniqueIdsSerializer,
+    ObjectTrackDetailsSerializer,
     # LinkObjectSerializer,
     # ActivityLogSerializer,
     # ActivityLogRequestSerializer,
@@ -874,137 +874,137 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
  
 
-    # @swagger_auto_schema(
-    #     operation_description="Get list of all unique object IDs for the project.",
-    #     responses={
-    #         200: "List of unique IDs", 
-    #         400: "Validation error", 
-    #         500: "Server error"
-    #     }
-    # )
-    # @action(detail=True, methods=['get'], url_path='unique-ids')
-    # def get_unique_ids(self, request, pk=None):
-    #     """
-    #     GET /api/v1/videos/{project_id}/unique-ids/ 
+    @swagger_auto_schema(
+        operation_description="Get list of all unique object IDs for the project.",
+        responses={
+            200: "List of unique IDs", 
+            400: "Validation error", 
+            500: "Server error"
+        }
+    )
+    @action(detail=True, methods=['get'], url_path='unique-ids')
+    def get_unique_ids(self, request, pk=None):
+        """
+        GET /api/v1/videos/{project_id}/unique-ids/ 
 
-    #     Retrieve all unique object IDs for a project.
-    #     This endpoint returns the list of distinct object identifiers
-    #     present in the project's tracking data.
+        Retrieve all unique object IDs for a project.
+        This endpoint returns the list of distinct object identifiers
+        present in the project's tracking data.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request.
-    #         pk (int): Project identifier.
-    #     Returns:
-    #         Response: List of unique object IDs.
-    #     """
-    #     try:
-    #         serializer = ListUniqueIdsSerializer(
-    #             data={}, context={"project_id": pk}
-    #         )
-    #         serializer.is_valid(raise_exception=True)
+        Args:
+            request (Request): Incoming HTTP request.
+            pk (int): Project identifier.
+        Returns:
+            Response: List of unique object IDs.
+        """
+        try:
+            serializer = ListUniqueIdsSerializer(
+                data={}, context={"project_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
 
-    #         payload = serializer.get_all_ids()
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "data": payload,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
+            payload = serializer.get_all_ids()
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
+            )
 
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid input data",
-    #                 "errors": ve.detail,
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    #     except Exception:
-    #         logger.error("Error fetching unique object IDs", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while fetching unique object IDs.",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception:
+            logger.error("Error fetching unique object IDs", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while fetching unique object IDs.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
-    # @swagger_auto_schema(
-    #     operation_description="Get start/end frame for a unique object and check if a frame lies inside the range.",
-    #     manual_parameters=[
-    #         openapi.Parameter(
-    #             "frame", 
-    #             openapi.IN_QUERY, 
-    #             type=openapi.TYPE_INTEGER,
-    #             required=True, 
-    #             description="Frame number to check"
-    #         )
-    #     ],
-    #     responses={
-    #         200: "Object details", 
-    #         400: "Validation error", 
-    #         500: "Server Error"
-    #     }
-    # )
-    # @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
-    # def get_unique_id_details(self, request, pk=None, object_id=None):
-    #     """
-    #     GET /api/v1/videos/{project_id}/unique-ids/{object_id}/?frame=NUM
+    @swagger_auto_schema(
+        operation_description="Get start/end frame for a unique object and check if a frame lies inside the range.",
+        manual_parameters=[
+            openapi.Parameter(
+                "frame", 
+                openapi.IN_QUERY, 
+                type=openapi.TYPE_INTEGER,
+                required=True, 
+                description="Frame number to check"
+            )
+        ],
+        responses={
+            200: "Object details", 
+            400: "Validation error", 
+            500: "Server Error"
+        }
+    )
+    @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
+    def get_unique_id_details(self, request, pk=None, object_id=None):
+        """
+        GET /api/v1/videos/{project_id}/unique-ids/{object_id}/?frame=NUM
 
-    #     Retrieve start and end frame details for a specific object.
-    #     This endpoint returns the start and end frame for the given object
-    #     and checks whether the provided frame lies within that range.
+        Retrieve start and end frame details for a specific object.
+        This endpoint returns the start and end frame for the given object
+        and checks whether the provided frame lies within that range.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request containing `frame`
-    #             query parameter.
-    #         pk (int): Project identifier.
-    #         object_id (int): Object identifier.
-    #     Returns:
-    #         Response: Object frame range and validation result.
-    #     """
-    #     try:
-    #         serializer = ObjectTrackDetailsSerializer(
-    #             data={
-    #                 "object_id": object_id, 
-    #                 "frame": request.query_params.get("frame"),
-    #             },
-    #             context={"project_id": pk},
-    #         )
-    #         serializer.is_valid(raise_exception=True)
+        Args:
+            request (Request): Incoming HTTP request containing `frame`
+                query parameter.
+            pk (int): Project identifier.
+            object_id (int): Object identifier.
+        Returns:
+            Response: Object frame range and validation result.
+        """
+        try:
+            serializer = ObjectTrackDetailsSerializer(
+                data={
+                    "object_id": object_id, 
+                    "frame": request.query_params.get("frame"),
+                },
+                context={"project_id": pk},
+            )
+            serializer.is_valid(raise_exception=True)
 
-    #         payload = serializer.get_object_data()
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "data": payload,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
+            payload = serializer.get_object_data()
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
+            )
 
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid input data",
-    #                 "errors": ve.detail,
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    #     except Exception:
-    #         logger.error("Error fetching unique object details", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while fetching object details.",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception:
+            logger.error("Error fetching unique object details", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while fetching object details.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
     
     # @swagger_auto_schema(
     #     method="put",
