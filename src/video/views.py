@@ -28,8 +28,8 @@ from .serializers import (
     ListUniqueIdsSerializer,
     ObjectTrackDetailsSerializer,
     # LinkObjectSerializer,
-    # ActivityLogSerializer,
-    # ActivityLogRequestSerializer,
+    ActivityLogSerializer,
+    ActivityLogRequestSerializer,
     # BreakObjectSerializer,
     # SwapObjectSerializer,
     # DeleteObjectSerializer,
@@ -1070,130 +1070,130 @@ class VideoViewSet(viewsets.ModelViewSet):
     #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     #         )
 
-    # @swagger_auto_schema(
-    #     method="post",
-    #     operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
-    #     request_body=ActivityLogSerializer,
-    #     responses={
-    #         201: "Activity logged successfully", 
-    #         400: "Validation error", 
-    #         500: "Internal server error"
-    #     }
-    # )
-    # @action(detail=True, methods=["post"], url_path="add-activity-log")
-    # def add_activity_log(self, request, pk=None):
-    #     """
-    #     POST /api/v1/videos/{project_id}/add-activity-log/
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
+        request_body=ActivityLogSerializer,
+        responses={
+            201: "Activity logged successfully", 
+            400: "Validation error", 
+            500: "Internal server error"
+        }
+    )
+    @action(detail=True, methods=["post"], url_path="add-activity-log")
+    def add_activity_log(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/add-activity-log/
 
-    #     Create a new activity log entry for a project.
-    #     Each call creates a single audit trail record describing an
-    #     operation performed on the project.
+        Create a new activity log entry for a project.
+        Each call creates a single audit trail record describing an
+        operation performed on the project.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request containing activity
-    #             log data in the request body.
-    #         pk (int): Project identifier (from URL).
-    #     Returns:
-    #         Response: Created activity log entry.
-    #     """
-    #     try:
-    #         data = request.data.copy()
-    #         data["project_id"] = pk
+        Args:
+            request (Request): Incoming HTTP request containing activity
+                log data in the request body.
+            pk (int): Project identifier (from URL).
+        Returns:
+            Response: Created activity log entry.
+        """
+        try:
+            data = request.data.copy()
+            data["project_id"] = pk
 
-    #         serializer = ActivityLogSerializer(data=data)
-    #         serializer.is_valid(raise_exception=True)
-    #         serializer.save()
+            serializer = ActivityLogSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
 
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "message": "Activity log entry created",
-    #                 "data": serializer.data,
-    #             },
-    #             status=status.HTTP_201_CREATED
-    #         )
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Activity log entry created",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_201_CREATED
+            )
 
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid input data",
-    #                 "errors": ve.detail, 
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail, 
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-    #     except Exception as e:
-    #         logger.error(f"Error creating activity log: {str(e)}", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while creating the activity log.",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR
-    #         )
+        except Exception as e:
+            logger.error(f"Error creating activity log: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while creating the activity log.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
-    # @swagger_auto_schema(
-    #     operation_description="Get all activity logs related to a video using video ID.",
-    #     manual_parameters=[
-    #         openapi.Parameter('video_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description='Video ID'),
-    #     ],
-    #     responses={
-    #         200: "List of activity logs", 
-    #         400: "Validation error", 
-    #         500: "Server error"
-    #     },
-    #     pagination_class=None
-    # )
-    # @action(detail=False, methods=['get'], url_path='activity/logs')
-    # def get_activity_logs(self, request):
-    #     """
-    #     GET /api/v1/videos/activity/logs?video_id=ID 
+    @swagger_auto_schema(
+        operation_description="Get all activity logs related to a video using video ID.",
+        manual_parameters=[
+            openapi.Parameter('video_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description='Video ID'),
+        ],
+        responses={
+            200: "List of activity logs", 
+            400: "Validation error", 
+            500: "Server error"
+        },
+        pagination_class=None
+    )
+    @action(detail=False, methods=['get'], url_path='activity/logs')
+    def get_activity_logs(self, request):
+        """
+        GET /api/v1/videos/activity/logs?video_id=ID 
 
-    #     Retrieve activity logs associated with a video.
-    #     Returns a chronological list of audit trail entries for the given
-    #     video identifier.
+        Retrieve activity logs associated with a video.
+        Returns a chronological list of audit trail entries for the given
+        video identifier.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request containing `video_id`
-    #             as a query parameter.
+        Args:
+            request (Request): Incoming HTTP request containing `video_id`
+                as a query parameter.
 
-    #     Returns:
-    #         Response: Activity log records.
-    #     """
-    #     try:
-    #         serializer = ActivityLogRequestSerializer(data=request.query_params)
-    #         serializer.is_valid(raise_exception=True)
+        Returns:
+            Response: Activity log records.
+        """
+        try:
+            serializer = ActivityLogRequestSerializer(data=request.query_params)
+            serializer.is_valid(raise_exception=True)
 
-    #         payload = serializer.get_data()
+            payload = serializer.get_data()
 
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "data": payload
-    #             },
-    #             status=status.HTTP_200_OK
-    #         )
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload
+                },
+                status=status.HTTP_200_OK
+            )
 
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid query parameters",
-    #                 "errors": ve.detail,
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid query parameters",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-    #     except Exception as e:
-    #         logger.error("Error fetching activity logs", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "An unexpected error occurred while fetching activity logs",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR
-    #         )
+        except Exception as e:
+            logger.error("Error fetching activity logs", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "An unexpected error occurred while fetching activity logs",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
     # @swagger_auto_schema(

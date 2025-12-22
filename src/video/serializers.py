@@ -682,95 +682,95 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
 # # =============================
 # # ACTIVITY SERIALIZERS
 # # =============================
-# class ActivityLogSerializer(serializers.Serializer):
+class ActivityLogSerializer(serializers.Serializer):
 
-#     project_id = serializers.IntegerField(required=True)
-#     objects_data = serializers.JSONField(required=True)
-#     operation = serializers.CharField(max_length=255, required=True)
+    project_id = serializers.IntegerField(required=True)
+    objects_data = serializers.JSONField(required=True)
+    operation = serializers.CharField(max_length=255, required=True)
 
-#     def validate_project_id(self, value):
-#         if not Project.objects.filter(project_id=value).exists():
-#             raise serializers.ValidationError("Invalid project_id")
-#         return value
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Invalid project_id")
+        return value
 
-#     def validate_objects_data(self, value):
-#         # -------------------------------
-#         # 1. If Swagger sends string → convert to JSON
-#         # -------------------------------
-#         if isinstance(value, str):
-#             try:
-#                 value = json.loads(value)
-#             except json.JSONDecodeError:
-#                 raise serializers.ValidationError("objects_data must be valid JSON.")
+    def validate_objects_data(self, value):
+        # -------------------------------
+        # 1. If Swagger sends string → convert to JSON
+        # -------------------------------
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise serializers.ValidationError("objects_data must be valid JSON.")
 
-#         # -------------------------------
-#         # 2. Must be a dict containing "objects"
-#         # -------------------------------
-#         if not isinstance(value, dict):
-#             raise serializers.ValidationError("objects_data must be a JSON object.")
+        # -------------------------------
+        # 2. Must be a dict containing "objects"
+        # -------------------------------
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("objects_data must be a JSON object.")
 
-#         if "objects" not in value:
-#             raise serializers.ValidationError("objects_data must contain key 'objects'.")
+        if "objects" not in value:
+            raise serializers.ValidationError("objects_data must contain key 'objects'.")
 
-#         objects_list = value["objects"]
+        objects_list = value["objects"]
 
-#         if not isinstance(objects_list, list):
-#             raise serializers.ValidationError("'objects' must be a list.")
+        if not isinstance(objects_list, list):
+            raise serializers.ValidationError("'objects' must be a list.")
 
-#         # -------------------------------
-#         # 3. Validate each object
-#         # -------------------------------
-#         for obj in objects_list:
-#             if not isinstance(obj, dict):
-#                 raise serializers.ValidationError("Each object must be a dictionary.")
+        # -------------------------------
+        # 3. Validate each object
+        # -------------------------------
+        for obj in objects_list:
+            if not isinstance(obj, dict):
+                raise serializers.ValidationError("Each object must be a dictionary.")
 
-#             required = ["id", "start_frame", "end_frame"]
+            required = ["id", "start_frame", "end_frame"]
 
-#             for field in required:
-#                 if field not in obj:
-#                     raise serializers.ValidationError(f"Object missing '{field}'")
+            for field in required:
+                if field not in obj:
+                    raise serializers.ValidationError(f"Object missing '{field}'")
 
-#                 if not isinstance(obj[field], int):
-#                     raise serializers.ValidationError(f"'{field}' must be integer.")
+                if not isinstance(obj[field], int):
+                    raise serializers.ValidationError(f"'{field}' must be integer.")
 
-#         return value
+        return value
 
-#     def create(self, validated_data):
-#         activity = ActivityLog.objects.create(
-#             project_id=validated_data["project_id"],
-#             objects_data=validated_data["objects_data"],
-#             operation=validated_data["operation"]
-#         )
+    def create(self, validated_data):
+        activity = ActivityLog.objects.create(
+            project_id_id=validated_data["project_id"],
+            objects_data=validated_data["objects_data"],
+            operation=validated_data["operation"]
+        )
 
-#         return {
-#             "activity_id": activity.activity_id,
-#             "project_id": activity.project_id,
-#             "objects_data": activity.objects_data,
-#             "operation": activity.operation,
-#             "activity_updated_at": activity.activity_updated_at
-#         }
+        return {
+            "activity_id": activity.activity_id,
+            "project_id": activity.project_id_id,
+            "objects_data": activity.objects_data,
+            "operation": activity.operation,
+            "activity_updated_at": activity.activity_updated_at
+        }
 
 
-# class ActivityLogRequestSerializer(serializers.Serializer):
-#     """
-#     Serializer to validate video ID and fetch all Activity Logs based on video_id.
-#     """
-#     video_id = serializers.IntegerField(required=True, help_text="Video ID")
+class ActivityLogRequestSerializer(serializers.Serializer):
+    """
+    Serializer to validate video ID and fetch all Activity Logs based on video_id.
+    """
+    video_id = serializers.IntegerField(required=True, help_text="Video ID")
 
-#     def validate(self, attrs):
-#         video_id = attrs.get('video_id')
+    def validate(self, attrs):
+        video_id = attrs.get('video_id')
 
-#         # Video ID must exist in Project table
-#         if not Project.objects.filter(video_id=video_id).exists():
-#             raise serializers.ValidationError({"video_id": f"Video with ID {video_id} does not exist"})
+        # Video ID must exist in Project table
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video_id": f"Video with ID {video_id} does not exist"})
 
-#         return attrs
+        return attrs
 
-#     def get_data(self):
-#         """
-#         Fetch all activity logs for the given video_id.
-#         """
-#         video_id = self.validated_data['video_id']
+    def get_data(self):
+        """
+        Fetch all activity logs for the given video_id.
+        """
+        video_id = self.validated_data['video_id']
 
 #         # # 1. Get all projects linked to this video
 #         # project_ids = list(
@@ -781,23 +781,23 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
 #         # # 2. Fetch activity logs for these projects
 #         # logs = ActivityLog.objects.filter(project_id__in=project_ids)
 
-#         logs = ActivityLog.objects.filter(
-#             project_id__in=Project.objects.filter(video_id=video_id).values("project_id")
-#         ).order_by("-activity_updated_at")
+        logs = ActivityLog.objects.filter(project_id_id=video_id).order_by("-activity_updated_at")
 
-#         # 3. Structure the response
-#         logs_data = []
-#         for log in logs:
-#             logs_data.append({
-#                 "activity_id": log.activity_id,
-#                 "project_id": log.project_id,
-#                 "objects_data": log.objects_data,
-#                 "operation": log.operation,
-#                 "activity_updated_at": log.activity_updated_at,
-#             })
+        # 3. Structure the response
+        logs_data = []
+        for log in logs:
+            logs_data.append({
+                "activity_id": log.activity_id,
+                "project_id": log.project_id_id,
+                "objects_data": log.objects_data,
+                "operation": log.operation,
+                "activity_updated_at": log.activity_updated_at,
+            })
 
-#         return {
-#             "video_id": video_id,
+        return {
+            "video_id": video_id,
+            "logs": logs_data
+        }
 #             "total_logs": len(logs_data),
 #             "logs": logs_data
 #         }
