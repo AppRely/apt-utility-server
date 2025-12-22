@@ -4,7 +4,8 @@ from django.db import transaction
 from ..models import Project
 from .project_file_storage_service import ProjectFileStorageService
 from .trk_validation_service import TrkValidationService
-from .video_data_bulk_insert_service import VideoDataBulkInsertService
+from .video_frame_bulk_insert_service import VideoFrameBulkInsertService
+from .frame_object_bulk_insert_service import FrameObjectBulkInsertService
 from .object_track_bulk_insert_service import ObjectTrackBulkInsertService
 
 
@@ -31,10 +32,14 @@ class ProjectUploadService:
                 status="Completed",
             )
 
-            project.video_id = project.project_id
-            project.save(update_fields=["video_id"])
+            # REMOVED INVALID video_id LOGIC
 
-            rows = VideoDataBulkInsertService.insert(
+            frame_count = VideoFrameBulkInsertService.insert(
+                project_id=project.project_id,
+                trk=trk
+            )
+
+            rows = FrameObjectBulkInsertService.insert(
                 project_id=project.project_id,
                 trk=trk
             )

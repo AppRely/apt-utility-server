@@ -1,73 +1,62 @@
 from django.contrib import admin
-from .models import VideoData, Project, ObjectTrack, ActivityLog
+from .models import (
+    Project,
+    VideoFrame,
+    FrameObject,
+    ObjectTrack,
+    ActivityLog,
+    OperationSnapshot,
+)
 from src.common.admin import BaseAdmin
-
-
-@admin.register(VideoData)
-class VideoDataAdmin(BaseAdmin):
-
-    list_display = (
-        "id",
-        "video_id",
-        "frame_no",
-        "frame_timestamp",
-        "trk_timestamp",
-        "object_1_id",
-        "object_1_coordinates",
-        "object_2_id",
-        "object_2_coordinates",
-        "object_3_id",
-        "object_3_coordinates",
-        "object_4_id",
-        "object_4_coordinates",
-        "object_5_id",
-        "object_5_coordinates",
-        "object_6_id",
-        "object_6_coordinates",
-        "object_7_id",
-        "object_7_coordinates",
-        "object_8_id",
-        "object_8_coordinates",
-        "object_9_id",
-        "object_9_coordinates",
-        "object_10_id",
-        "object_10_coordinates",
-        "tag",
-        "timestamp",
-        "confidence",
-        "created_at",
-        "updated_at",
-    )
-
-    list_filter = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "tag", "timestamp", "confidence")  
-    search_fields = ("video_id", "frame_no", "object_1_id", "object_2_id", "object_3_id", "object_4_id", "object_5_id", "object_6_id", "object_7_id", "object_8_id", "object_9_id", "object_10_id", "tag", "timestamp", "confidence")
-
-    readonly_fields = ("created_at", "updated_at")
-
 
 @admin.register(Project)
 class ProjectAdmin(BaseAdmin):
     list_display = (
         "project_id",
         "project_name",
-        "video_id",
         "video_name",
         "video_path",
-        "width",
-        "height",
         "status",
         "trk_file_name",
         "trk_file_path",
         "project_status",
-        "fps",
-        "total_frames",
         "created_at",
         "updated_at",
     )
 
     search_fields = ("project_name", "video_name")
-    list_filter = ("status",)
+    list_filter = ("status", "project_status")
     readonly_fields = ("created_at", "updated_at")
+
+@admin.register(VideoFrame)
+class VideoFrameAdmin(BaseAdmin):
+    list_display = (
+        "id",
+        "project_id",
+        "frame_no",
+        "frame_timestamp",
+        "trk_timestamp",
+    )
+
+    search_fields = ("project_id__project_id", "frame_no")
+    list_filter = ("project_id__project_id",)
+    readonly_fields = ()
+
+@admin.register(FrameObject)
+class FrameObjectAdmin(BaseAdmin):
+    list_display = (
+        "id",
+        "frame",
+        "object_id",
+        "coordinates",
+        "confidence",
+        "tag",
+        "timestamp",
+    )
+
+    search_fields = ("frame__id", "object_id")
+    list_filter = ("object_id",)
+    readonly_fields = ()
 
 @admin.register(ObjectTrack)
 class ObjectTrackAdmin(BaseAdmin):
@@ -98,9 +87,24 @@ class ActivityLogAdmin(BaseAdmin):
         "project_id",
         "objects_data",
         "operation",
+        "activity_created_at",
         "activity_updated_at",
     )
 
-    search_fields = ("activity_id", "project_id")
-    list_filter = ("project_id",)
-    readonly_fields = ("activity_updated_at",)
+    search_fields = ("activity_id", "project_id__project_id", "operation")
+    list_filter = ("project_id__project_id", "operation")
+    readonly_fields = ("activity_created_at", "activity_updated_at")
+
+
+@admin.register(OperationSnapshot)
+class OperationSnapshotAdmin(BaseAdmin):
+    list_display = (
+        "id",
+        "activity",
+        "before_state",
+        "after_state",
+        "created_at",
+    )
+
+    search_fields = ("activity__activity_id",)
+    readonly_fields = ("created_at",)

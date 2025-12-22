@@ -17,21 +17,22 @@ from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import serializers
-from .models import Video, Project, VideoData, ObjectTrack, ActivityLog
+# from .models import Video, Project, VideoData, ObjectTrack, ActivityLog
+from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog, Video
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
-    FrameObjectRangeSerializer,
-    FrameInfoSerializer,
-    ProjectSerializer,
-    ListUniqueIdsSerializer,
-    ObjectTrackDetailsSerializer,
-    LinkObjectSerializer,
-    ActivityLogSerializer,
-    ActivityLogRequestSerializer,
-    BreakObjectSerializer,
-    SwapObjectSerializer,
-    DeleteObjectSerializer,
+    # FrameObjectRangeSerializer,
+    # FrameInfoSerializer,
+    # ProjectSerializer,
+    # ListUniqueIdsSerializer,
+    # ObjectTrackDetailsSerializer,
+    # LinkObjectSerializer,
+    # ActivityLogSerializer,
+    # ActivityLogRequestSerializer,
+    # BreakObjectSerializer,
+    # SwapObjectSerializer,
+    # DeleteObjectSerializer,
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -339,236 +340,236 @@ class VideoViewSet(viewsets.ModelViewSet):
     #         return JsonResponse({"error": f"Failed to get TRK data: {str(e)}"}, status=500)
 
     
-    @swagger_auto_schema(
-        operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
-        manual_parameters=[
-            openapi.Parameter(
-                'start',
-                openapi.IN_QUERY,
-                type=openapi.TYPE_INTEGER,
-                required=True,
-                description='Start frame id (inclusive)',
-            ),
-            openapi.Parameter(
-                'end',
-                openapi.IN_QUERY,
-                type=openapi.TYPE_INTEGER,
-                required=True,
-                description='End frame id (inclusive, max span 150)',
-            ),
-        ],
-        responses={
-            200: 'JSON payload for the requested frame range',
-            400: 'Validation error or frame out of range',
-            404: 'No valid previous frame found',
-            500: 'Server error'
-            },
-    )
-    @action(detail=True, methods=['get'], url_path='frame-object-range')
-    def frame_object_range(self, request, pk=None):
-        """
-        GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
-        Retrieve object tracking data for a contiguous range of frames.
+    # @swagger_auto_schema(
+    #     operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
+    #     manual_parameters=[
+    #         openapi.Parameter(
+    #             'start',
+    #             openapi.IN_QUERY,
+    #             type=openapi.TYPE_INTEGER,
+    #             required=True,
+    #             description='Start frame id (inclusive)',
+    #         ),
+    #         openapi.Parameter(
+    #             'end',
+    #             openapi.IN_QUERY,
+    #             type=openapi.TYPE_INTEGER,
+    #             required=True,
+    #             description='End frame id (inclusive, max span 150)',
+    #         ),
+    #     ],
+    #     responses={
+    #         200: 'JSON payload for the requested frame range',
+    #         400: 'Validation error or frame out of range',
+    #         404: 'No valid previous frame found',
+    #         500: 'Server error'
+    #         },
+    # )
+    # @action(detail=True, methods=['get'], url_path='frame-object-range')
+    # def frame_object_range(self, request, pk=None):
+    #     """
+    #     GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
+    #     Retrieve object tracking data for a contiguous range of frames.
 
-        This endpoint returns object coordinates and metadata for all frames
-        between the given start and end frame (inclusive). If frame data is
-        missing within the requested range, the nearest previous valid frame
-        is used as a fallback.
+    #     This endpoint returns object coordinates and metadata for all frames
+    #     between the given start and end frame (inclusive). If frame data is
+    #     missing within the requested range, the nearest previous valid frame
+    #     is used as a fallback.
 
-        Args:
-            request (Request): Incoming HTTP request containing `start` and `end`
-                query parameters.
-            pk (int): Video identifier.
+    #     Args:
+    #         request (Request): Incoming HTTP request containing `start` and `end`
+    #             query parameters.
+    #         pk (int): Video identifier.
 
-        Returns:
-            Response: Object-wise tracking data for the requested frame range.
-        """
-        try:
-            data = request.query_params.copy()
-            data['video_id'] = pk
+    #     Returns:
+    #         Response: Object-wise tracking data for the requested frame range.
+    #     """
+    #     try:
+    #         data = request.query_params.copy()
+    #         data['video_id'] = pk
             
-            serializer = FrameObjectRangeSerializer(data=data)
-            serializer.is_valid(raise_exception=True)
+    #         serializer = FrameObjectRangeSerializer(data=data)
+    #         serializer.is_valid(raise_exception=True)
 
-            validated = serializer.validated_data
-            video_id = validated["video_id"]
-            start = validated["start"]
-            end = validated["end"]
+    #         validated = serializer.validated_data
+    #         video_id = validated["video_id"]
+    #         start = validated["start"]
+    #         end = validated["end"]
         
-            max_row = (
-                VideoData.objects
-                .filter(video_id=video_id)
-                .order_by('-frame_no')
-                .first()
-            )
-            if max_row and end > max_row.frame_no:
-                return Response(
-                    {
-                        "status": "error",
-                        "message": "Requested frame range is out of bounds",
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+    #         max_row = (
+    #             VideoData.objects
+    #             .filter(video_id=video_id)
+    #             .order_by('-frame_no')
+    #             .first()
+    #         )
+    #         if max_row and end > max_row.frame_no:
+    #             return Response(
+    #                 {
+    #                     "status": "error",
+    #                     "message": "Requested frame range is out of bounds",
+    #                 },
+    #                 status=status.HTTP_404_NOT_FOUND,
+    #             )
 
-            existing_frames = set(
-                VideoData.objects.filter(
-                    video_id=video_id,
-                    frame_no__gte=start,
-                    frame_no__lte=end,
-                ).values_list("frame_no", flat=True)
-            )
+    #         existing_frames = set(
+    #             VideoData.objects.filter(
+    #                 video_id=video_id,
+    #                 frame_no__gte=start,
+    #                 frame_no__lte=end,
+    #             ).values_list("frame_no", flat=True)
+    #         )
 
-            missing_frames = [
-                f for f in range(start, end + 1)
-                if f not in existing_frames
-            ]
+    #         missing_frames = [
+    #             f for f in range(start, end + 1)
+    #             if f not in existing_frames
+    #         ]
 
-            fallback_frames = []
-            for frame in missing_frames:
-                prev = self._get_previous_valid_frame(video_id, frame)
-                if prev is not None:
-                    fallback_frames.append(prev)
+    #         fallback_frames = []
+    #         for frame in missing_frames:
+    #             prev = self._get_previous_valid_frame(video_id, frame)
+    #             if prev is not None:
+    #                 fallback_frames.append(prev)
 
-            if fallback_frames:
-                serializer.extra_frames = fallback_frames
+    #         if fallback_frames:
+    #             serializer.extra_frames = fallback_frames
 
-            payload = serializer.get_data()
+    #         payload = serializer.get_data()
 
-            return Response(
-                {
-                    "status": "success",
-                    "data": payload,
-                },
-                status=status.HTTP_200_OK,
-            )
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "data": payload,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
            
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid query parameters",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid query parameters",
+    #                 "errors": ve.detail,
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
 
-        except Exception:
-            logger.error("Error fetching frame object range", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while fetching frame data",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception:
+    #         logger.error("Error fetching frame object range", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while fetching frame data",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
     
-    @swagger_auto_schema(
-        operation_description="Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.",
-        manual_parameters=[
-            openapi.Parameter(
-                'video',
-                openapi.IN_QUERY,
-                type=openapi.TYPE_INTEGER,
-                required=True,
-                description='Video ID (project_id)',
-            ),
-            openapi.Parameter(
-                'frame',
-                openapi.IN_QUERY,
-                type=openapi.TYPE_INTEGER,
-                required=True,
-                description='Frame number',
-            ),
-        ],
-        pagination_class=None,
-        responses={
-            200: 'JSON with frame data and tracking information', 
-            400: 'Validation error',
-            404: 'No valid previous frame found',
-            500: 'Server error'
-        },
-    )
-    @action(detail=False, methods=['get'], url_path='frame')
-    def get_frame_info(self, request):
-        """
-        GET /api/v1/frame?video=ID&frame=NUM
-        Retrieve tracking data for a single frame from the database.
+    # @swagger_auto_schema(
+    #     operation_description="Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.",
+    #     manual_parameters=[
+    #         openapi.Parameter(
+    #             'video',
+    #             openapi.IN_QUERY,
+    #             type=openapi.TYPE_INTEGER,
+    #             required=True,
+    #             description='Video ID (project_id)',
+    #         ),
+    #         openapi.Parameter(
+    #             'frame',
+    #             openapi.IN_QUERY,
+    #             type=openapi.TYPE_INTEGER,
+    #             required=True,
+    #             description='Frame number',
+    #         ),
+    #     ],
+    #     pagination_class=None,
+    #     responses={
+    #         200: 'JSON with frame data and tracking information', 
+    #         400: 'Validation error',
+    #         404: 'No valid previous frame found',
+    #         500: 'Server error'
+    #     },
+    # )
+    # @action(detail=False, methods=['get'], url_path='frame')
+    # def get_frame_info(self, request):
+    #     """
+    #     GET /api/v1/frame?video=ID&frame=NUM
+    #     Retrieve tracking data for a single frame from the database.
 
-        This endpoint fetches all stored tracking information for a given
-        video and frame number. If the requested frame is missing, the system
-        automatically falls back to the nearest previous valid frame.
+    #     This endpoint fetches all stored tracking information for a given
+    #     video and frame number. If the requested frame is missing, the system
+    #     automatically falls back to the nearest previous valid frame.
 
-        Args:
-            request (Request): Incoming HTTP request containing `video` and
-                `frame` query parameters.
+    #     Args:
+    #         request (Request): Incoming HTTP request containing `video` and
+    #             `frame` query parameters.
 
-        Returns:
-            Response: Tracking data for the resolved frame.
-        """
-        try:
-            serializer = FrameInfoSerializer(data=request.query_params)
-            serializer.is_valid(raise_exception=True)
+    #     Returns:
+    #         Response: Tracking data for the resolved frame.
+    #     """
+    #     try:
+    #         serializer = FrameInfoSerializer(data=request.query_params)
+    #         serializer.is_valid(raise_exception=True)
             
-            video_id = serializer.validated_data['video']
-            frame_no = serializer.validated_data['frame']
+    #         video_id = serializer.validated_data['video']
+    #         frame_no = serializer.validated_data['frame']
 
-            max_row = (
-                VideoData.objects
-                .filter(video_id=video_id)
-                .order_by("-frame_no")
-                .first()
-            )
+    #         max_row = (
+    #             VideoData.objects
+    #             .filter(video_id=video_id)
+    #             .order_by("-frame_no")
+    #             .first()
+    #         )
 
-            if max_row and frame_no > max_row.frame_no:
-                return Response(
-                    {
-                        "status": "error",
-                        "message": "Requested frame is out of range",
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+    #         if max_row and frame_no > max_row.frame_no:
+    #             return Response(
+    #                 {
+    #                     "status": "error",
+    #                     "message": "Requested frame is out of range",
+    #                 },
+    #                 status=status.HTTP_404_NOT_FOUND,
+    #             )
 
-            if not self._has_frame_data(video_id, frame_no):
-                fallback = self._get_previous_valid_frame(video_id, frame_no)
-                if fallback is None:
-                    return Response(
-                        {
-                            "status": "error",
-                            "message": "No valid previous frame found",
-                        },
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
-                serializer.validated_data["frame"] = fallback
+    #         if not self._has_frame_data(video_id, frame_no):
+    #             fallback = self._get_previous_valid_frame(video_id, frame_no)
+    #             if fallback is None:
+    #                 return Response(
+    #                     {
+    #                         "status": "error",
+    #                         "message": "No valid previous frame found",
+    #                     },
+    #                     status=status.HTTP_404_NOT_FOUND,
+    #                 )
+    #             serializer.validated_data["frame"] = fallback
 
-            payload = serializer.get_data()
+    #         payload = serializer.get_data()
 
-            return Response(
-                {
-                    "status": "success",
-                    "data": payload,
-                },
-                status=status.HTTP_200_OK,
-            )
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid query parameters",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "data": payload,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid query parameters",
+    #                 "errors": ve.detail,
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
 
-        except Exception:
-            logger.error("Error fetching frame info", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while fetching frame data",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception:
+    #         logger.error("Error fetching frame info", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while fetching frame data",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
 
     # @swagger_auto_schema(
@@ -682,710 +683,710 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    @swagger_auto_schema(
-    operation_description="Get list of all in-progress projects with essential details",
-    responses={
-        200: ProjectSerializer(many=True),
-        500: "Server error"
-    },
-    )
-    @action(detail=False, methods=['get'], url_path='project-list')
-    def project_list(self, request):
-        """
-        GET /videos/project-list/
+    # @swagger_auto_schema(
+    # operation_description="Get list of all in-progress projects with essential details",
+    # responses={
+    #     200: ProjectSerializer(many=True),
+    #     500: "Server error"
+    # },
+    # )
+    # @action(detail=False, methods=['get'], url_path='project-list')
+    # def project_list(self, request):
+    #     """
+    #     GET /videos/project-list/
 
-        Retrieve a list of projects with active or completed status.
-        Returns projects that are currently in progress or completed,
-        ordered by project identifier.
+    #     Retrieve a list of projects with active or completed status.
+    #     Returns projects that are currently in progress or completed,
+    #     ordered by project identifier.
 
-        Args:
-            request (Request): Incoming HTTP request.
-        Returns:
-            Response: List of serialized project records.
-        """
-        try:
+    #     Args:
+    #         request (Request): Incoming HTTP request.
+    #     Returns:
+    #         Response: List of serialized project records.
+    #     """
+    #     try:
 
-            projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
+    #         projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
 
-            serializer = ProjectSerializer(projects, many=True)
-            return Response(
-                {
-                    "status": "success",
-                    "data": serializer.data,
-                },
-                status=status.HTTP_200_OK,
-            )
+    #         serializer = ProjectSerializer(projects, many=True)
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "data": serializer.data,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
             
-        except Exception:
-            logger.error("Failed to fetch projects", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Failed to fetch projects",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception:
+    #         logger.error("Failed to fetch projects", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Failed to fetch projects",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
-    @swagger_auto_schema(
-        operation_description="Stream the project video file with HTTP Range support.",
-        responses=
-        {
-            206: 'Partial Content', 
-            200: 'Full Content', 
-            404: 'Not Found',
-            500: 'Server Error',
-        },
-    )
-    @action(detail=True, methods=['get'], url_path='project-stream')
-    def project_stream(self, request, pk=None):
-        """
-        GET /videos/{id}/project-stream/
+    # @swagger_auto_schema(
+    #     operation_description="Stream the project video file with HTTP Range support.",
+    #     responses=
+    #     {
+    #         206: 'Partial Content', 
+    #         200: 'Full Content', 
+    #         404: 'Not Found',
+    #         500: 'Server Error',
+    #     },
+    # )
+    # @action(detail=True, methods=['get'], url_path='project-stream')
+    # def project_stream(self, request, pk=None):
+    #     """
+    #     GET /videos/{id}/project-stream/
 
-        Stream a project video file with HTTP Range support.
-        Supports partial content delivery to enable efficient seeking
-        and playback in video players.
+    #     Stream a project video file with HTTP Range support.
+    #     Supports partial content delivery to enable efficient seeking
+    #     and playback in video players.
 
-        Args:
-            request (Request): Incoming HTTP request.
-            pk (int): Project identifier.
-        Returns:
-            HttpResponse: Video stream response.
-        """
-        try:
-            project = get_object_or_404(Project, pk=pk)
+    #     Args:
+    #         request (Request): Incoming HTTP request.
+    #         pk (int): Project identifier.
+    #     Returns:
+    #         HttpResponse: Video stream response.
+    #     """
+    #     try:
+    #         project = get_object_or_404(Project, pk=pk)
             
-            video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
+    #         video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
 
-            if not project.video_name:
-                return Response(
-                {
-                    "status": "error", 
-                    "message": "Video filename missing in project"
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+    #         if not project.video_name:
+    #             return Response(
+    #             {
+    #                 "status": "error", 
+    #                 "message": "Video filename missing in project"
+    #             },
+    #             status=status.HTTP_404_NOT_FOUND,
+    #         )
 
-            file_path = os.path.join(video_folder, project.video_name)
+    #         file_path = os.path.join(video_folder, project.video_name)
 
-            if not os.path.exists(file_path):
-                return Response(
-                    {
-                        "status": "error", 
-                        "message": "Video file not found on server"
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+    #         if not os.path.exists(file_path):
+    #             return Response(
+    #                 {
+    #                     "status": "error", 
+    #                     "message": "Video file not found on server"
+    #                 },
+    #                 status=status.HTTP_404_NOT_FOUND,
+    #             )
 
-            range_header = request.headers.get('Range')
-            if range_header:
-                return self._stream_video_with_range(file_path, range_header)
+    #         range_header = request.headers.get('Range')
+    #         if range_header:
+    #             return self._stream_video_with_range(file_path, range_header)
             
-            response = FileResponse(
-                open(file_path, 'rb'), 
-                content_type='video/mp4'
-            )
-            response['Content-Length'] = str(os.path.getsize(file_path))
-            response['Accept-Ranges'] = 'bytes'
-            response['Cache-Control'] = 'public, max-age=3600'
-            return response
+    #         response = FileResponse(
+    #             open(file_path, 'rb'), 
+    #             content_type='video/mp4'
+    #         )
+    #         response['Content-Length'] = str(os.path.getsize(file_path))
+    #         response['Accept-Ranges'] = 'bytes'
+    #         response['Cache-Control'] = 'public, max-age=3600'
+    #         return response
             
-        except Exception:
-            logger.error("Error streaming video file", exc_info=True)
-            return Response(
-            {
-                "status": "error", 
-                "message": "Something went wrong while streaming the video"
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+    #     except Exception:
+    #         logger.error("Error streaming video file", exc_info=True)
+    #         return Response(
+    #         {
+    #             "status": "error", 
+    #             "message": "Something went wrong while streaming the video"
+    #         },
+    #         status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #     )
 
 
-    @swagger_auto_schema(
-        operation_description="Stream/download the raw TRK file content for the project.",
-        responses={
-            200: 'TRK file', 
-            404: 'TRK file not found',
-            500: 'Server error'
-            },
-    )
-    @action(detail=True, methods=['get'], url_path='project-stream-trk')
-    def project_stream_trk(self, request, pk=None):
-        """
-        GET /videos/{id}/project-stream-trk/ 
+    # @swagger_auto_schema(
+    #     operation_description="Stream/download the raw TRK file content for the project.",
+    #     responses={
+    #         200: 'TRK file', 
+    #         404: 'TRK file not found',
+    #         500: 'Server error'
+    #         },
+    # )
+    # @action(detail=True, methods=['get'], url_path='project-stream-trk')
+    # def project_stream_trk(self, request, pk=None):
+    #     """
+    #     GET /videos/{id}/project-stream-trk/ 
 
-        Stream or download the raw TRK file associated with a project.
-        The file is returned as an attachment for download or inspection.
+    #     Stream or download the raw TRK file associated with a project.
+    #     The file is returned as an attachment for download or inspection.
 
-        Args:
-            request (Request): Incoming HTTP request.
-            pk (int): Project identifier.
-        Returns:
-            FileResponse: TRK file stream.
-        """
-        logger.info(f"Streaming TRK for project {pk}")
-        try:
-            project = get_object_or_404(Project, pk=pk)
+    #     Args:
+    #         request (Request): Incoming HTTP request.
+    #         pk (int): Project identifier.
+    #     Returns:
+    #         FileResponse: TRK file stream.
+    #     """
+    #     logger.info(f"Streaming TRK for project {pk}")
+    #     try:
+    #         project = get_object_or_404(Project, pk=pk)
 
-            if not project.trk_file_name:
-                return Response(
-                    {
-                        "status": "error",
-                        "message": "TRK file not uploaded for this project",
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+    #         if not project.trk_file_name:
+    #             return Response(
+    #                 {
+    #                     "status": "error",
+    #                     "message": "TRK file not uploaded for this project",
+    #                 },
+    #                 status=status.HTTP_404_NOT_FOUND,
+    #             )
 
-            track_folder = os.path.join(settings.MEDIA_ROOT, "track_folder")
-            trk_path = os.path.join(track_folder, project.trk_file_name)
+    #         track_folder = os.path.join(settings.MEDIA_ROOT, "track_folder")
+    #         trk_path = os.path.join(track_folder, project.trk_file_name)
 
-            if not os.path.exists(trk_path):
-                return Response(
-                    {
-                        "status": "error",
-                        "message": "TRK file not found on server",
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+    #         if not os.path.exists(trk_path):
+    #             return Response(
+    #                 {
+    #                     "status": "error",
+    #                     "message": "TRK file not found on server",
+    #                 },
+    #                 status=status.HTTP_404_NOT_FOUND,
+    #             )
             
-            response = FileResponse(
-                open(trk_path, 'rb'),
-                as_attachment=True,
-                filename=os.path.basename(trk_path),
-                content_type="application/octet-stream",
-            )
-            response['Cache-Control'] = 'public, max-age=3600'
-            return response
+    #         response = FileResponse(
+    #             open(trk_path, 'rb'),
+    #             as_attachment=True,
+    #             filename=os.path.basename(trk_path),
+    #             content_type="application/octet-stream",
+    #         )
+    #         response['Cache-Control'] = 'public, max-age=3600'
+    #         return response
 
-        except Exception:
-            logger.error("Error streaming TRK file", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while streaming the TRK file",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception:
+    #         logger.error("Error streaming TRK file", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while streaming the TRK file",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
     
 
-    @swagger_auto_schema(
-        operation_description="Get list of all unique object IDs for the project.",
-        responses={
-            200: "List of unique IDs", 
-            400: "Validation error", 
-            500: "Server error"
-        }
-    )
-    @action(detail=True, methods=['get'], url_path='unique-ids')
-    def get_unique_ids(self, request, pk=None):
-        """
-        GET /api/v1/videos/{project_id}/unique-ids/ 
+    # @swagger_auto_schema(
+    #     operation_description="Get list of all unique object IDs for the project.",
+    #     responses={
+    #         200: "List of unique IDs", 
+    #         400: "Validation error", 
+    #         500: "Server error"
+    #     }
+    # )
+    # @action(detail=True, methods=['get'], url_path='unique-ids')
+    # def get_unique_ids(self, request, pk=None):
+    #     """
+    #     GET /api/v1/videos/{project_id}/unique-ids/ 
 
-        Retrieve all unique object IDs for a project.
-        This endpoint returns the list of distinct object identifiers
-        present in the project's tracking data.
+    #     Retrieve all unique object IDs for a project.
+    #     This endpoint returns the list of distinct object identifiers
+    #     present in the project's tracking data.
 
-        Args:
-            request (Request): Incoming HTTP request.
-            pk (int): Project identifier.
-        Returns:
-            Response: List of unique object IDs.
-        """
-        try:
-            serializer = ListUniqueIdsSerializer(
-                data={}, context={"project_id": pk}
-            )
-            serializer.is_valid(raise_exception=True)
+    #     Args:
+    #         request (Request): Incoming HTTP request.
+    #         pk (int): Project identifier.
+    #     Returns:
+    #         Response: List of unique object IDs.
+    #     """
+    #     try:
+    #         serializer = ListUniqueIdsSerializer(
+    #             data={}, context={"project_id": pk}
+    #         )
+    #         serializer.is_valid(raise_exception=True)
 
-            payload = serializer.get_all_ids()
-            return Response(
-                {
-                    "status": "success",
-                    "data": payload,
-                },
-                status=status.HTTP_200_OK,
-            )
+    #         payload = serializer.get_all_ids()
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "data": payload,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
 
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid input data",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid input data",
+    #                 "errors": ve.detail,
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
 
-        except Exception:
-            logger.error("Error fetching unique object IDs", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while fetching unique object IDs.",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception:
+    #         logger.error("Error fetching unique object IDs", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while fetching unique object IDs.",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
 
-    @swagger_auto_schema(
-        operation_description="Get start/end frame for a unique object and check if a frame lies inside the range.",
-        manual_parameters=[
-            openapi.Parameter(
-                "frame", 
-                openapi.IN_QUERY, 
-                type=openapi.TYPE_INTEGER,
-                required=True, 
-                description="Frame number to check"
-            )
-        ],
-        responses={
-            200: "Object details", 
-            400: "Validation error", 
-            500: "Server Error"
-        }
-    )
-    @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
-    def get_unique_id_details(self, request, pk=None, object_id=None):
-        """
-        GET /api/v1/videos/{project_id}/unique-ids/{object_id}/?frame=NUM
+    # @swagger_auto_schema(
+    #     operation_description="Get start/end frame for a unique object and check if a frame lies inside the range.",
+    #     manual_parameters=[
+    #         openapi.Parameter(
+    #             "frame", 
+    #             openapi.IN_QUERY, 
+    #             type=openapi.TYPE_INTEGER,
+    #             required=True, 
+    #             description="Frame number to check"
+    #         )
+    #     ],
+    #     responses={
+    #         200: "Object details", 
+    #         400: "Validation error", 
+    #         500: "Server Error"
+    #     }
+    # )
+    # @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
+    # def get_unique_id_details(self, request, pk=None, object_id=None):
+    #     """
+    #     GET /api/v1/videos/{project_id}/unique-ids/{object_id}/?frame=NUM
 
-        Retrieve start and end frame details for a specific object.
-        This endpoint returns the start and end frame for the given object
-        and checks whether the provided frame lies within that range.
+    #     Retrieve start and end frame details for a specific object.
+    #     This endpoint returns the start and end frame for the given object
+    #     and checks whether the provided frame lies within that range.
 
-        Args:
-            request (Request): Incoming HTTP request containing `frame`
-                query parameter.
-            pk (int): Project identifier.
-            object_id (int): Object identifier.
-        Returns:
-            Response: Object frame range and validation result.
-        """
-        try:
-            serializer = ObjectTrackDetailsSerializer(
-                data={
-                    "object_id": object_id, 
-                    "frame": request.query_params.get("frame"),
-                },
-                context={"project_id": pk},
-            )
-            serializer.is_valid(raise_exception=True)
+    #     Args:
+    #         request (Request): Incoming HTTP request containing `frame`
+    #             query parameter.
+    #         pk (int): Project identifier.
+    #         object_id (int): Object identifier.
+    #     Returns:
+    #         Response: Object frame range and validation result.
+    #     """
+    #     try:
+    #         serializer = ObjectTrackDetailsSerializer(
+    #             data={
+    #                 "object_id": object_id, 
+    #                 "frame": request.query_params.get("frame"),
+    #             },
+    #             context={"project_id": pk},
+    #         )
+    #         serializer.is_valid(raise_exception=True)
 
-            payload = serializer.get_object_data()
-            return Response(
-                {
-                    "status": "success",
-                    "data": payload,
-                },
-                status=status.HTTP_200_OK,
-            )
+    #         payload = serializer.get_object_data()
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "data": payload,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
 
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid input data",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid input data",
+    #                 "errors": ve.detail,
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
 
-        except Exception:
-            logger.error("Error fetching unique object details", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while fetching object details.",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception:
+    #         logger.error("Error fetching unique object details", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while fetching object details.",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
     
-    @swagger_auto_schema(
-        method="put",
-        operation_description="Merge object_2 into object_1.",
-        request_body=LinkObjectSerializer,
-        responses={
-            200: "Objects merged successfully",
-            400: "Validation error",
-            500: "Internal server error",
-        }
-    )
-    @action(detail=True, methods=["put"], url_path="link-objects")
-    def link_objects(self, request, pk=None):
-        """
-        PUT /api/v1/videos/{video_id}/link-objects/
+    # @swagger_auto_schema(
+    #     method="put",
+    #     operation_description="Merge object_2 into object_1.",
+    #     request_body=LinkObjectSerializer,
+    #     responses={
+    #         200: "Objects merged successfully",
+    #         400: "Validation error",
+    #         500: "Internal server error",
+    #     }
+    # )
+    # @action(detail=True, methods=["put"], url_path="link-objects")
+    # def link_objects(self, request, pk=None):
+    #     """
+    #     PUT /api/v1/videos/{video_id}/link-objects/
 
-        Merge one object into another within a video.
-        The second object is merged into the first, updating all related
-        tracking data accordingly.
+    #     Merge one object into another within a video.
+    #     The second object is merged into the first, updating all related
+    #     tracking data accordingly.
 
-        Args:
-            request (Request): Incoming HTTP request containing object
-                merge data in the request body.
-            pk (int): Video identifier.
-        Returns:
-            Response: Result of the merge operation.
-        """
-        try:
-            serializer = LinkObjectSerializer(
-                data=request.data,
-                context={"video_id": pk}
-            )
-            serializer.is_valid(raise_exception=True)
+    #     Args:
+    #         request (Request): Incoming HTTP request containing object
+    #             merge data in the request body.
+    #         pk (int): Video identifier.
+    #     Returns:
+    #         Response: Result of the merge operation.
+    #     """
+    #     try:
+    #         serializer = LinkObjectSerializer(
+    #             data=request.data,
+    #             context={"video_id": pk}
+    #         )
+    #         serializer.is_valid(raise_exception=True)
 
-            result = serializer.merge_data()
+    #         result = serializer.merge_data()
 
-            return Response(
-                {
-                    "status": "success",
-                    "message": "Objects merged successfully",
-                    "data": result,
-                },
-                status=status.HTTP_200_OK,
-            )
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "message": "Objects merged successfully",
+    #                 "data": result,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
 
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid input data",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid input data",
+    #                 "errors": ve.detail,
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
         
-        except Exception:
-            logger.error("Error linking objects", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while linking objects.",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception:
+    #         logger.error("Error linking objects", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while linking objects.",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
-    @swagger_auto_schema(
-        method="post",
-        operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
-        request_body=ActivityLogSerializer,
-        responses={
-            201: "Activity logged successfully", 
-            400: "Validation error", 
-            500: "Internal server error"
-        }
-    )
-    @action(detail=True, methods=["post"], url_path="add-activity-log")
-    def add_activity_log(self, request, pk=None):
-        """
-        POST /api/v1/videos/{project_id}/add-activity-log/
+    # @swagger_auto_schema(
+    #     method="post",
+    #     operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
+    #     request_body=ActivityLogSerializer,
+    #     responses={
+    #         201: "Activity logged successfully", 
+    #         400: "Validation error", 
+    #         500: "Internal server error"
+    #     }
+    # )
+    # @action(detail=True, methods=["post"], url_path="add-activity-log")
+    # def add_activity_log(self, request, pk=None):
+    #     """
+    #     POST /api/v1/videos/{project_id}/add-activity-log/
 
-        Create a new activity log entry for a project.
-        Each call creates a single audit trail record describing an
-        operation performed on the project.
+    #     Create a new activity log entry for a project.
+    #     Each call creates a single audit trail record describing an
+    #     operation performed on the project.
 
-        Args:
-            request (Request): Incoming HTTP request containing activity
-                log data in the request body.
-            pk (int): Project identifier (from URL).
-        Returns:
-            Response: Created activity log entry.
-        """
-        try:
-            data = request.data.copy()
-            data["project_id"] = pk
+    #     Args:
+    #         request (Request): Incoming HTTP request containing activity
+    #             log data in the request body.
+    #         pk (int): Project identifier (from URL).
+    #     Returns:
+    #         Response: Created activity log entry.
+    #     """
+    #     try:
+    #         data = request.data.copy()
+    #         data["project_id"] = pk
 
-            serializer = ActivityLogSerializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
+    #         serializer = ActivityLogSerializer(data=data)
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
 
-            return Response(
-                {
-                    "status": "success",
-                    "message": "Activity log entry created",
-                    "data": serializer.data,
-                },
-                status=status.HTTP_201_CREATED
-            )
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "message": "Activity log entry created",
+    #                 "data": serializer.data,
+    #             },
+    #             status=status.HTTP_201_CREATED
+    #         )
 
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid input data",
-                    "errors": ve.detail, 
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid input data",
+    #                 "errors": ve.detail, 
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST
+    #         )
 
-        except Exception as e:
-            logger.error(f"Error creating activity log: {str(e)}", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while creating the activity log.",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+    #     except Exception as e:
+    #         logger.error(f"Error creating activity log: {str(e)}", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while creating the activity log.",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR
+    #         )
 
-    @swagger_auto_schema(
-        operation_description="Get all activity logs related to a video using video ID.",
-        manual_parameters=[
-            openapi.Parameter('video_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description='Video ID'),
-        ],
-        responses={
-            200: "List of activity logs", 
-            400: "Validation error", 
-            500: "Server error"
-        },
-        pagination_class=None
-    )
-    @action(detail=False, methods=['get'], url_path='activity/logs')
-    def get_activity_logs(self, request):
-        """
-        GET /api/v1/videos/activity/logs?video_id=ID 
+    # @swagger_auto_schema(
+    #     operation_description="Get all activity logs related to a video using video ID.",
+    #     manual_parameters=[
+    #         openapi.Parameter('video_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description='Video ID'),
+    #     ],
+    #     responses={
+    #         200: "List of activity logs", 
+    #         400: "Validation error", 
+    #         500: "Server error"
+    #     },
+    #     pagination_class=None
+    # )
+    # @action(detail=False, methods=['get'], url_path='activity/logs')
+    # def get_activity_logs(self, request):
+    #     """
+    #     GET /api/v1/videos/activity/logs?video_id=ID 
 
-        Retrieve activity logs associated with a video.
-        Returns a chronological list of audit trail entries for the given
-        video identifier.
+    #     Retrieve activity logs associated with a video.
+    #     Returns a chronological list of audit trail entries for the given
+    #     video identifier.
 
-        Args:
-            request (Request): Incoming HTTP request containing `video_id`
-                as a query parameter.
+    #     Args:
+    #         request (Request): Incoming HTTP request containing `video_id`
+    #             as a query parameter.
 
-        Returns:
-            Response: Activity log records.
-        """
-        try:
-            serializer = ActivityLogRequestSerializer(data=request.query_params)
-            serializer.is_valid(raise_exception=True)
+    #     Returns:
+    #         Response: Activity log records.
+    #     """
+    #     try:
+    #         serializer = ActivityLogRequestSerializer(data=request.query_params)
+    #         serializer.is_valid(raise_exception=True)
 
-            payload = serializer.get_data()
+    #         payload = serializer.get_data()
 
-            return Response(
-                {
-                    "status": "success",
-                    "data": payload
-                },
-                status=status.HTTP_200_OK
-            )
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "data": payload
+    #             },
+    #             status=status.HTTP_200_OK
+    #         )
 
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid query parameters",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid query parameters",
+    #                 "errors": ve.detail,
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST
+    #         )
 
-        except Exception as e:
-            logger.error("Error fetching activity logs", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "An unexpected error occurred while fetching activity logs",
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+    #     except Exception as e:
+    #         logger.error("Error fetching activity logs", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "An unexpected error occurred while fetching activity logs",
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR
+    #         )
 
 
-    @swagger_auto_schema(
-        method="post",
-        operation_description=(
-            "Break an object track into two at a given frame. "
-            "The original object is split into two active objects. "
-            "All operations are performed atomically."
-        ),
-        request_body=BreakObjectSerializer,
-        responses={
-            200: "Object break operation completed successfully",
-            400: "Validation error",
-            500: "Internal server error",
-        },
-    )
-    @action(detail=True, methods=["post"], url_path="objects/break")
-    def break_object(self, request, pk=None):
-        """
-        POST /api/v1/videos/{project_id}/objects/break/
+    # @swagger_auto_schema(
+    #     method="post",
+    #     operation_description=(
+    #         "Break an object track into two at a given frame. "
+    #         "The original object is split into two active objects. "
+    #         "All operations are performed atomically."
+    #     ),
+    #     request_body=BreakObjectSerializer,
+    #     responses={
+    #         200: "Object break operation completed successfully",
+    #         400: "Validation error",
+    #         500: "Internal server error",
+    #     },
+    # )
+    # @action(detail=True, methods=["post"], url_path="objects/break")
+    # def break_object(self, request, pk=None):
+    #     """
+    #     POST /api/v1/videos/{project_id}/objects/break/
 
-        Split an object track into two at a specified frame.
+    #     Split an object track into two at a specified frame.
 
-        The original object is divided into two active objects, and all
-        related tracking data is updated atomically.
+    #     The original object is divided into two active objects, and all
+    #     related tracking data is updated atomically.
 
-        Args:
-            object_id (int): Identifier of the object to be broken.
-            brake_frame (int): Frame number at which to split the object.
-            start_frame (int): Start frame of the object.
-            end_frame (int): End frame of the object.
-            pk (int): Project identifier.
+    #     Args:
+    #         object_id (int): Identifier of the object to be broken.
+    #         brake_frame (int): Frame number at which to split the object.
+    #         start_frame (int): Start frame of the object.
+    #         end_frame (int): End frame of the object.
+    #         pk (int): Project identifier.
 
-        Returns:
-            Response: Result of the break operation.
-        """
-        try:
-            serializer = BreakObjectSerializer(
-                data=request.data,
-                context={"project_id": pk}
-            )
-            serializer.is_valid(raise_exception=True)
-            result = serializer.save()
+    #     Returns:
+    #         Response: Result of the break operation.
+    #     """
+    #     try:
+    #         serializer = BreakObjectSerializer(
+    #             data=request.data,
+    #             context={"project_id": pk}
+    #         )
+    #         serializer.is_valid(raise_exception=True)
+    #         result = serializer.save()
 
-            return Response(
-                {
-                    "status": "success",
-                    "message": "Object break operation completed successfully",
-                    "data": result,
-                },
-                status=status.HTTP_200_OK,
-            )
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "message": "Object break operation completed successfully",
+    #                 "data": result,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
 
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Invalid input data",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Invalid input data",
+    #                 "errors": ve.detail,
+    #             },
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
 
-        except Exception as e:
-            logger.error(f"Error during break operation: {str(e)}", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while breaking the object.",
-                    "errors": str(e),
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception as e:
+    #         logger.error(f"Error during break operation: {str(e)}", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while breaking the object.",
+    #                 "errors": str(e),
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
-    @swagger_auto_schema(
-        method="put",
-        operation_description="Swap object_1 with object_2 inside VideoData and ObjectTrack.",
-        request_body=SwapObjectSerializer,
-        responses={
-            200: "Swap successful", 
-            400: "Validation error", 
-            500: "Swap failed"
-        },
-    )
-    @action(detail=True, methods=["put"], url_path="swap-objects")
-    def swap_objects(self, request, pk=None):
-        """
-        PUT /api/v1/videos/{video_id}/swap-objects/
-        Swap two objects within a video.
-        This operation exchanges all tracking data between the two specified
-        objects.
+    # @swagger_auto_schema(
+    #     method="put",
+    #     operation_description="Swap object_1 with object_2 inside VideoData and ObjectTrack.",
+    #     request_body=SwapObjectSerializer,
+    #     responses={
+    #         200: "Swap successful", 
+    #         400: "Validation error", 
+    #         500: "Swap failed"
+    #     },
+    # )
+    # @action(detail=True, methods=["put"], url_path="swap-objects")
+    # def swap_objects(self, request, pk=None):
+    #     """
+    #     PUT /api/v1/videos/{video_id}/swap-objects/
+    #     Swap two objects within a video.
+    #     This operation exchanges all tracking data between the two specified
+    #     objects.
 
-        Args:
-            object_id_1 (int): First object identifier.
-            object_id_2 (int): Second object identifier.
-            object_1_start_frame (int): Start frame of the first object.
-            object_1_end_frame (int): End frame of the first object.
-            object_2_start_frame (int): Start frame of the second object.
-            object_2_end_frame (int): End frame of the second object.
-            pk (int): Video identifier.
+    #     Args:
+    #         object_id_1 (int): First object identifier.
+    #         object_id_2 (int): Second object identifier.
+    #         object_1_start_frame (int): Start frame of the first object.
+    #         object_1_end_frame (int): End frame of the first object.
+    #         object_2_start_frame (int): Start frame of the second object.
+    #         object_2_end_frame (int): End frame of the second object.
+    #         pk (int): Video identifier.
 
-        Returns:
-            Response: Result of the swap operation.
-        """
-        try:
-            serializer = SwapObjectSerializer(
-                data=request.data,
-                context={"video_id": pk}
-            )
-            serializer.is_valid(raise_exception=True)
-            result = serializer.swap_data()
-            return Response(
-                {
-                    "status": "success",
-                    "message": "Objects swapped successfully",
-                    "data": result,
-                },
-                status=status.HTTP_200_OK,
-            )
+    #     Returns:
+    #         Response: Result of the swap operation.
+    #     """
+    #     try:
+    #         serializer = SwapObjectSerializer(
+    #             data=request.data,
+    #             context={"video_id": pk}
+    #         )
+    #         serializer.is_valid(raise_exception=True)
+    #         result = serializer.swap_data()
+    #         return Response(
+    #             {
+    #                 "status": "success",
+    #                 "message": "Objects swapped successfully",
+    #                 "data": result,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
 
-        except serializers.ValidationError as ve:
-            return Response(
-                    {
-                        "status": "error",
-                        "message": "Invalid input data",
-                        "errors": ve.detail,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-            )
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #                 {
+    #                     "status": "error",
+    #                     "message": "Invalid input data",
+    #                     "errors": ve.detail,
+    #                 },
+    #                 status=status.HTTP_400_BAD_REQUEST,
+    #         )
 
-        except Exception as e:
-            logger.error(f"Error during swap operation: {str(e)}", exc_info=True)
-            return Response(
-                {
-                    "status": "error",
-                    "message": "Something went wrong while swapping objects.",
-                    "errors": str(e),
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+    #     except Exception as e:
+    #         logger.error(f"Error during swap operation: {str(e)}", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error",
+    #                 "message": "Something went wrong while swapping objects.",
+    #                 "errors": str(e),
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
-    @swagger_auto_schema(
-            method="post",
-            operation_description="Delete (nullify) an active object from video_data within a given frame range. Operation is allowed only if the object is active.",
-            request_body=DeleteObjectSerializer,
-            responses={
-                200: "Object delete operation completed successfully",
-                400: "Validation error", 
-                500: "Internal server error"
-            },
-        )
-    @action(detail=True, methods=["post"], url_path="objects/delete")
-    def delete_object(self, request, pk=None):
-        """
-        POST /api/v1/videos/{project_id}/objects/delete/
+    # @swagger_auto_schema(
+    #         method="post",
+    #         operation_description="Delete (nullify) an active object from video_data within a given frame range. Operation is allowed only if the object is active.",
+    #         request_body=DeleteObjectSerializer,
+    #         responses={
+    #             200: "Object delete operation completed successfully",
+    #             400: "Validation error", 
+    #             500: "Internal server error"
+    #         },
+    #     )
+    # @action(detail=True, methods=["post"], url_path="objects/delete")
+    # def delete_object(self, request, pk=None):
+    #     """
+    #     POST /api/v1/videos/{project_id}/objects/delete/
 
-        Delete an active object from video_data within a specified
-        frame range. This operation is only permitted if the object is currently
-        active.
+    #     Delete an active object from video_data within a specified
+    #     frame range. This operation is only permitted if the object is currently
+    #     active.
 
-        Args:
-            request (Request): Incoming HTTP request containing delete parameters
-                in the request body.
-            pk (int): Project identifier.
+    #     Args:
+    #         request (Request): Incoming HTTP request containing delete parameters
+    #             in the request body.
+    #         pk (int): Project identifier.
 
-        Returns:
-            Response: Result of the delete operation.   
-        """
-        try:
-            serializer = DeleteObjectSerializer(
-                data=request.data,
-                context={"project_id": pk}
-            )
-            serializer.is_valid(raise_exception=True)
-            result = serializer.save()
+    #     Returns:
+    #         Response: Result of the delete operation.   
+    #     """
+    #     try:
+    #         serializer = DeleteObjectSerializer(
+    #             data=request.data,
+    #             context={"project_id": pk}
+    #         )
+    #         serializer.is_valid(raise_exception=True)
+    #         result = serializer.save()
 
-            return Response(
-                { 
-                    "status": "success", 
-                    "message": "Object deleted successfully", 
-                    "data": result,
-                }, 
-            status=status.HTTP_200_OK,)
+    #         return Response(
+    #             { 
+    #                 "status": "success", 
+    #                 "message": "Object deleted successfully", 
+    #                 "data": result,
+    #             }, 
+    #         status=status.HTTP_200_OK,)
 
-        except serializers.ValidationError as ve:
-            return Response(
-                {
-                    "status": "error", 
-                    "message": "Invalid input data",
-                    "errors": ve.detail,
-                }, 
-            status=status.HTTP_400_BAD_REQUEST,)
+    #     except serializers.ValidationError as ve:
+    #         return Response(
+    #             {
+    #                 "status": "error", 
+    #                 "message": "Invalid input data",
+    #                 "errors": ve.detail,
+    #             }, 
+    #         status=status.HTTP_400_BAD_REQUEST,)
 
-        except Exception as e:
-            logger.error(f"Error during delete object operation: {str(e)}", exc_info=True)
-            return Response(
-                {
-                    "status": "error", 
-                    "message": "Something went wrong while deleting the object", 
-                    "errors": str(e),
-                }, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,)
+    #     except Exception as e:
+    #         logger.error(f"Error during delete object operation: {str(e)}", exc_info=True)
+    #         return Response(
+    #             {
+    #                 "status": "error", 
+    #                 "message": "Something went wrong while deleting the object", 
+    #                 "errors": str(e),
+    #             }, 
+    #         status=status.HTTP_500_INTERNAL_SERVER_ERROR,)
