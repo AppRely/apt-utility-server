@@ -27,11 +27,11 @@ from .serializers import (
     ProjectSerializer,
     ListUniqueIdsSerializer,
     ObjectTrackDetailsSerializer,
-    # LinkObjectSerializer,
+    LinkObjectSerializer,
     ActivityLogSerializer,
     ActivityLogRequestSerializer,
     # BreakObjectSerializer,
-    # SwapObjectSerializer,
+    SwapObjectSerializer,
     # DeleteObjectSerializer,
 )
 
@@ -1006,69 +1006,69 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
     
-    # @swagger_auto_schema(
-    #     method="put",
-    #     operation_description="Merge object_2 into object_1.",
-    #     request_body=LinkObjectSerializer,
-    #     responses={
-    #         200: "Objects merged successfully",
-    #         400: "Validation error",
-    #         500: "Internal server error",
-    #     }
-    # )
-    # @action(detail=True, methods=["put"], url_path="link-objects")
-    # def link_objects(self, request, pk=None):
-    #     """
-    #     PUT /api/v1/videos/{video_id}/link-objects/
+    @swagger_auto_schema(
+        method="put",
+        operation_description="Merge object_2 into object_1.",
+        request_body=LinkObjectSerializer,
+        responses={
+            200: "Objects merged successfully",
+            400: "Validation error",
+            500: "Internal server error",
+        }
+    )
+    @action(detail=True, methods=["put"], url_path="link-objects")
+    def link_objects(self, request, pk=None):
+        """
+        PUT /api/v1/videos/{video_id}/link-objects/
 
-    #     Merge one object into another within a video.
-    #     The second object is merged into the first, updating all related
-    #     tracking data accordingly.
+        Merge one object into another within a video.
+        The second object is merged into the first, updating all related
+        tracking data accordingly.
 
-    #     Args:
-    #         request (Request): Incoming HTTP request containing object
-    #             merge data in the request body.
-    #         pk (int): Video identifier.
-    #     Returns:
-    #         Response: Result of the merge operation.
-    #     """
-    #     try:
-    #         serializer = LinkObjectSerializer(
-    #             data=request.data,
-    #             context={"video_id": pk}
-    #         )
-    #         serializer.is_valid(raise_exception=True)
+        Args:
+            request (Request): Incoming HTTP request containing object
+                merge data in the request body.
+            pk (int): Video identifier.
+        Returns:
+            Response: Result of the merge operation.
+        """
+        try:
+            serializer = LinkObjectSerializer(
+                data=request.data,
+                context={"video_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
 
-    #         result = serializer.merge_data()
+            result = serializer.merge_data()
 
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "message": "Objects merged successfully",
-    #                 "data": result,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Objects merged successfully",
+                    "data": result,
+                },
+                status=status.HTTP_200_OK,
+            )
 
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Invalid input data",
-    #                 "errors": ve.detail,
-    #             },
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
-    #     except Exception:
-    #         logger.error("Error linking objects", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while linking objects.",
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception:
+            logger.error("Error linking objects", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while linking objects.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @swagger_auto_schema(
         method="post",
@@ -1268,72 +1268,72 @@ class VideoViewSet(viewsets.ModelViewSet):
     #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
     #         )
 
-    # @swagger_auto_schema(
-    #     method="put",
-    #     operation_description="Swap object_1 with object_2 inside VideoData and ObjectTrack.",
-    #     request_body=SwapObjectSerializer,
-    #     responses={
-    #         200: "Swap successful", 
-    #         400: "Validation error", 
-    #         500: "Swap failed"
-    #     },
-    # )
-    # @action(detail=True, methods=["put"], url_path="swap-objects")
-    # def swap_objects(self, request, pk=None):
-    #     """
-    #     PUT /api/v1/videos/{video_id}/swap-objects/
-    #     Swap two objects within a video.
-    #     This operation exchanges all tracking data between the two specified
-    #     objects.
+    @swagger_auto_schema(
+        method="put",
+        operation_description="Swap object_1 with object_2 inside VideoData and ObjectTrack.",
+        request_body=SwapObjectSerializer,
+        responses={
+            200: "Swap successful", 
+            400: "Validation error", 
+            500: "Swap failed"
+        },
+    )
+    @action(detail=True, methods=["put"], url_path="swap-objects")
+    def swap_objects(self, request, pk=None):
+        """
+        PUT /api/v1/videos/{video_id}/swap-objects/
+        Swap two objects within a video.
+        This operation exchanges all tracking data between the two specified
+        objects.
 
-    #     Args:
-    #         object_id_1 (int): First object identifier.
-    #         object_id_2 (int): Second object identifier.
-    #         object_1_start_frame (int): Start frame of the first object.
-    #         object_1_end_frame (int): End frame of the first object.
-    #         object_2_start_frame (int): Start frame of the second object.
-    #         object_2_end_frame (int): End frame of the second object.
-    #         pk (int): Video identifier.
+        Args:
+            object_id_1 (int): First object identifier.
+            object_id_2 (int): Second object identifier.
+            object_1_start_frame (int): Start frame of the first object.
+            object_1_end_frame (int): End frame of the first object.
+            object_2_start_frame (int): Start frame of the second object.
+            object_2_end_frame (int): End frame of the second object.
+            pk (int): Video identifier.
 
-    #     Returns:
-    #         Response: Result of the swap operation.
-    #     """
-    #     try:
-    #         serializer = SwapObjectSerializer(
-    #             data=request.data,
-    #             context={"video_id": pk}
-    #         )
-    #         serializer.is_valid(raise_exception=True)
-    #         result = serializer.swap_data()
-    #         return Response(
-    #             {
-    #                 "status": "success",
-    #                 "message": "Objects swapped successfully",
-    #                 "data": result,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
+        Returns:
+            Response: Result of the swap operation.
+        """
+        try:
+            serializer = SwapObjectSerializer(
+                data=request.data,
+                context={"video_id": pk}
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.swap_data()
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Objects swapped successfully",
+                    "data": result,
+                },
+                status=status.HTTP_200_OK,
+            )
 
-    #     except serializers.ValidationError as ve:
-    #         return Response(
-    #                 {
-    #                     "status": "error",
-    #                     "message": "Invalid input data",
-    #                     "errors": ve.detail,
-    #                 },
-    #                 status=status.HTTP_400_BAD_REQUEST,
-    #         )
+        except serializers.ValidationError as ve:
+            return Response(
+                    {
+                        "status": "error",
+                        "message": "Invalid input data",
+                        "errors": ve.detail,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    #     except Exception as e:
-    #         logger.error(f"Error during swap operation: {str(e)}", exc_info=True)
-    #         return Response(
-    #             {
-    #                 "status": "error",
-    #                 "message": "Something went wrong while swapping objects.",
-    #                 "errors": str(e),
-    #             },
-    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-    #         )
+        except Exception as e:
+            logger.error(f"Error during swap operation: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while swapping objects.",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     # @swagger_auto_schema(
     #         method="post",
