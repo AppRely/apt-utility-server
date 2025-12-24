@@ -1080,8 +1080,8 @@ class VideoViewSet(viewsets.ModelViewSet):
             500: "Internal server error"
         }
     )
-    @action(detail=True, methods=["post"], url_path="add-activity-log")
-    def add_activity_log(self, request, pk=None):
+    @action(detail=False, methods=["post"], url_path="add-activity-log")
+    def add_activity_log(self, request):
         """
         POST /api/v1/videos/{project_id}/add-activity-log/
 
@@ -1097,10 +1097,10 @@ class VideoViewSet(viewsets.ModelViewSet):
             Response: Created activity log entry.
         """
         try:
-            data = request.data.copy()
-            data["project_id"] = pk
+            # data = request.data.copy()
+            # data["project_id"] = pk
 
-            serializer = ActivityLogSerializer(data=data)
+            serializer = ActivityLogSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save()
 

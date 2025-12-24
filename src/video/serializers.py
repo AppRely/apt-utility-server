@@ -684,14 +684,14 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
 # # =============================
 class ActivityLogSerializer(serializers.Serializer):
 
-    project_id = serializers.IntegerField(required=True)
+    #project_id = serializers.IntegerField(required=True)
     objects_data = serializers.JSONField(required=True)
     operation = serializers.CharField(max_length=255, required=True)
 
-    def validate_project_id(self, value):
-        if not Project.objects.filter(project_id=value).exists():
-            raise serializers.ValidationError("Invalid project_id")
-        return value
+    # def validate_project_id(self, value):
+    #     if not Project.objects.filter(project_id=value).exists():
+    #         raise serializers.ValidationError("Invalid project_id")
+    #     return value
 
     def validate_objects_data(self, value):
         # -------------------------------
@@ -709,6 +709,23 @@ class ActivityLogSerializer(serializers.Serializer):
         if not isinstance(value, dict):
             raise serializers.ValidationError("objects_data must be a JSON object.")
 
+        # 2️⃣ Validate project_id inside objects_data
+        if "project_id" not in value:
+            raise serializers.ValidationError(
+                "objects_data must contain 'project_id'."
+            )
+
+        if not isinstance(value["project_id"], int):
+            raise serializers.ValidationError(
+                "'project_id' must be an integer."
+            )
+
+        if not Project.objects.filter(project_id=value["project_id"]).exists():
+            raise serializers.ValidationError(
+                "Invalid project_id inside objects_data."
+            )
+
+        # 3️⃣ Validate objects list
         if "objects" not in value:
             raise serializers.ValidationError("objects_data must contain key 'objects'.")
 
@@ -724,9 +741,7 @@ class ActivityLogSerializer(serializers.Serializer):
             if not isinstance(obj, dict):
                 raise serializers.ValidationError("Each object must be a dictionary.")
 
-            required = ["id", "start_frame", "end_frame"]
-
-            for field in required:
+            for field in ["id", "start_frame", "end_frame"]:
                 if field not in obj:
                     raise serializers.ValidationError(f"Object missing '{field}'")
 
@@ -735,9 +750,13 @@ class ActivityLogSerializer(serializers.Serializer):
 
         return value
 
+
     def create(self, validated_data):
+        objects_data = validated_data["objects_data"]
+        project_id = objects_data["project_id"]
+
         activity = ActivityLog.objects.create(
-            project_id_id=validated_data["project_id"],
+            project_id_id=project_id,
             objects_data=validated_data["objects_data"],
             operation=validated_data["operation"]
         )
