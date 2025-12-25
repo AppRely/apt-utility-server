@@ -64,7 +64,7 @@
 
 
 from collections import defaultdict
-from django.db.models import Q
+from django.db.models import Q, Prefetch
 from ..models import VideoFrame, FrameObject, Project
 
 class FrameObjectRangeService:
@@ -84,7 +84,9 @@ class FrameObjectRangeService:
         frames_qs = (
             VideoFrame.objects
             .filter(frame_filter)
-            .prefetch_related("frame_objects")
+            .prefetch_related(
+                Prefetch("frame_objects", queryset=FrameObject.objects.filter(is_active=True))
+            )
             .order_by("frame_no")
         )
 

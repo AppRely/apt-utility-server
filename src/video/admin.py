@@ -58,6 +58,7 @@ class FrameObjectAdmin(BaseAdmin):
         "confidence",
         "tag",
         "timestamp",
+        "is_active"
     )
 
     search_fields = ("frame__id", "object_id")
@@ -105,11 +106,12 @@ class ActivityLogAdmin(BaseAdmin):
         "operation",
         "activity_created_at",
         "activity_updated_at",
+        "is_applied",
     )
 
-    search_fields = ("activity_id", "project_id__project_id", "operation")
-    list_filter = ("project_id__project_id", "operation")
-    readonly_fields = ("activity_created_at", "activity_updated_at")
+    search_fields = ("activity_id", "project_id__project_id", "operation", "is_applied")
+    list_filter = ("project_id__project_id", "operation", "is_applied")
+    readonly_fields = ("activity_created_at", "activity_updated_at", "is_applied")
 
 
 @admin.register(OperationSnapshot)
@@ -123,4 +125,5 @@ class OperationSnapshotAdmin(BaseAdmin):
     )
 
     search_fields = ("activity__activity_id",)
-    readonly_fields = ("created_at",)
+    list_filter = ("activity__activity_id",)
+    readonly_fields = ("created_at", "activity", "before_state", "after_state")

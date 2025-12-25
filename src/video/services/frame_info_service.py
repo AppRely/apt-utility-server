@@ -28,7 +28,7 @@ class FrameInfoService:
         # 2. Fetch all objects in this frame
         # ------------------------------------
         frame_objects = list(
-            FrameObject.objects.filter(frame=frame)
+            FrameObject.objects.filter(frame=frame, is_active=True)
         )
 
         if not frame_objects:
