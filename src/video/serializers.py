@@ -1163,113 +1163,113 @@ class BreakObjectSerializer(serializers.Serializer):
 
 class SwapObjectSerializer(serializers.Serializer):
     """
-    Swap two object ids and their occurrences in VideoData + ObjectTrack.
+    HARD swap of two object IDs from current_frame onward.
+    Canonical swap implementation.
     """
-    object_1_id = serializers.IntegerField(required=True)
-    object_1_start = serializers.IntegerField(required=True)
-    object_1_end = serializers.IntegerField(required=True)
 
+    object_1_id = serializers.IntegerField(required=True)
     object_2_id = serializers.IntegerField(required=True)
-    object_2_start = serializers.IntegerField(required=True)
-    object_2_end = serializers.IntegerField(required=True)
+    current_frame = serializers.IntegerField(required=True)
 
     def validate(self, data):
         project_id = self.context.get("project_id") or self.context.get("video_id")
         if not project_id:
             raise serializers.ValidationError("Missing project_id in context.")
 
-        # Cannot swap same ID
         if data["object_1_id"] == data["object_2_id"]:
             raise serializers.ValidationError("Object IDs cannot be the same.")
 
-        if not Project.objects.filter(project_id=project_id).exists():
-            raise serializers.ValidationError("Invalid project")
+        if data["current_frame"] < 0:
+            raise serializers.ValidationError({"current_frame": "Must be >= 0"})
 
-        # Ensure object tracks exist and are active
         try:
-            obj1_track = ObjectTrack.objects.get(project_id_id=project_id, object_id=data["object_1_id"])
+            obj1_track = ObjectTrack.objects.get(
+                project_id_id=project_id,
+                object_id=data["object_1_id"],
+                object_status=1,
+            )
         except ObjectTrack.DoesNotExist:
-            raise serializers.ValidationError({"object_1_id": f"Active Object {data['object_1_id']} not found"})
+            raise serializers.ValidationError({"object_1_id": "Object not found"})
+
         try:
-            obj2_track = ObjectTrack.objects.get(project_id_id=project_id, object_id=data["object_2_id"])
+            obj2_track = ObjectTrack.objects.get(
+                project_id_id=project_id,
+                object_id=data["object_2_id"],
+                object_status=1,
+            )
         except ObjectTrack.DoesNotExist:
-            raise serializers.ValidationError({"object_2_id": f"Active Object {data['object_2_id']} not found"})
+            raise serializers.ValidationError({"object_2_id": "Object not found"})
 
-        # Validate swap ranges are within lifecycle
-        if not (obj1_track.start_frame <= data["object_1_start"] <= data["object_1_end"] <= obj1_track.end_frame):
-            raise serializers.ValidationError({"object_1_range": "Outside object_1 range"})
-        if not (obj2_track.start_frame <= data["object_2_start"] <= data["object_2_end"] <= obj2_track.end_frame):
-            raise serializers.ValidationError({"object_2_range": "Outside object_2 range"})
+        if data["current_frame"] > min(obj1_track.end_frame, obj2_track.end_frame):
+            raise serializers.ValidationError(
+                {"current_frame": "Swap frame outside overlapping lifetime"}
+            )
 
-        if data["object_1_start"] > data["object_1_end"]:
-            raise serializers.ValidationError({"object_1_range": "Invalid range"})
-        if data["object_2_start"] > data["object_2_end"]:
-            raise serializers.ValidationError({"object_2_range": "Invalid range"})
-
+        data["project_id"] = project_id
+        data["obj1_track"] = obj1_track
+        data["obj2_track"] = obj2_track
         return data
-    
-    # @staticmethod
-    # def _get_object_id_fields():
-    #     return [
-    #         field.name
-    #         for field in VideoData._meta.fields
-    #         if field.name.startswith("object_") and field.name.endswith("_id")
-    #     ]
-
-    
 
     def swap_data(self):
         data = self.validated_data
-        project_id = self.context.get("project_id") or self.context.get("video_id")
 
+        project_id = data["project_id"]
         obj1 = data["object_1_id"]
         obj2 = data["object_2_id"]
-        s1, e1 = data["object_1_start"], data["object_1_end"]
-        s2, e2 = data["object_2_start"], data["object_2_end"]
+        current_frame = data["current_frame"]
 
-        # fetch lifecycle rows
-        obj1_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj1)
-        obj2_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj2)
+        obj1_track = data["obj1_track"]
+        obj2_track = data["obj2_track"]
 
-        TEMP_ID = -int(project_id)  # always unique per project
+        swap_start = current_frame
+        swap_end = max(obj1_track.end_frame, obj2_track.end_frame)
+
+        TEMP_ID = -int(project_id)
+        rows_updated = 0
 
         with transaction.atomic():
-            # 1️⃣ object_1 → TEMP_ID
+            # 1️⃣ obj1 → TEMP
             FrameObject.objects.filter(
                 frame__project_id_id=project_id,
+                frame__frame_no__gte=swap_start,
+                frame__frame_no__lte=swap_end,
                 object_id=obj1,
-                frame__frame_no__gte=s1,
-                frame__frame_no__lte=e1,
             ).update(object_id=TEMP_ID)
 
-            # 2️⃣ object_2 → object_1
+            # 2️⃣ obj2 → obj1
             FrameObject.objects.filter(
                 frame__project_id_id=project_id,
+                frame__frame_no__gte=swap_start,
+                frame__frame_no__lte=swap_end,
                 object_id=obj2,
-                frame__frame_no__gte=s2,
-                frame__frame_no__lte=e2,
             ).update(object_id=obj1)
 
-            # 3️⃣ TEMP_ID → object_2
+            # 3️⃣ TEMP → obj2 (restricted to swap window)
             rows_updated = FrameObject.objects.filter(
                 frame__project_id_id=project_id,
+                frame__frame_no__gte=swap_start,
+                frame__frame_no__lte=swap_end,
                 object_id=TEMP_ID,
             ).update(object_id=obj2)
 
-            # 4️⃣ Swap ObjectTrack ranges (NOT object_id)
-            obj1_start, obj1_end = obj1_row.start_frame, obj1_row.end_frame
-            obj2_start, obj2_end = obj2_row.start_frame, obj2_row.end_frame
+            # 4️⃣ Swap ObjectTrack ranges
+            obj1_start, obj1_end = obj1_track.start_frame, obj1_track.end_frame
+            obj2_start, obj2_end = obj2_track.start_frame, obj2_track.end_frame
 
-            obj1_row.start_frame = obj2_start
-            obj1_row.end_frame = obj2_end
-            obj1_row.operation_note = f"swap_with_object_{obj2}"
+            obj1_track.start_frame = obj2_start
+            obj1_track.end_frame = obj2_end
+            obj1_track.operation_note = (
+                f"swap_from_frame_{current_frame}_with_{obj2}"
+            )
 
-            obj2_row.start_frame = obj1_start
-            obj2_row.end_frame = obj1_end
-            obj2_row.operation_note = f"swap_with_object_{obj1}"
+            obj2_track.start_frame = obj1_start
+            obj2_track.end_frame = obj1_end
+            obj2_track.operation_note = (
+                f"swap_from_frame_{current_frame}_with_{obj1}"
+            )
 
-            obj1_row.save(update_fields=["start_frame", "end_frame", "operation_note"])
-            obj2_row.save(update_fields=["start_frame", "end_frame", "operation_note"])
+            obj1_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
+            obj2_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
 
         return {
             "status": "success",
@@ -1278,19 +1278,20 @@ class SwapObjectSerializer(serializers.Serializer):
             "rows_updated": rows_updated,
             "object_track_object_1": {
                 "object_id": obj1,
-                "start_frame": obj1_row.start_frame,
-                "end_frame": obj1_row.end_frame,
-                "object_status": obj1_row.object_status,
-                "operation_note": obj1_row.operation_note,
+                "start_frame": obj1_track.start_frame,
+                "end_frame": obj1_track.end_frame,
+                "object_status": obj1_track.object_status,
+                "operation_note": obj1_track.operation_note,
             },
             "object_track_object_2": {
                 "object_id": obj2,
-                "start_frame": obj2_row.start_frame,
-                "end_frame": obj2_row.end_frame,
-                "object_status": obj2_row.object_status,
-                "operation_note": obj2_row.operation_note,
+                "start_frame": obj2_track.start_frame,
+                "end_frame": obj2_track.end_frame,
+                "object_status": obj2_track.object_status,
+                "operation_note": obj2_track.operation_note,
             },
         }
+
 
 
 class DeleteObjectSerializer(serializers.Serializer):
