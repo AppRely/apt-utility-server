@@ -29,7 +29,7 @@ services:
         chmod +x /tmp/entrypoint.sh
         exec /tmp/entrypoint.sh "$@"
       - --
-    command: python manage.py runserver 0.0.0.0:8000
+    command: sh -c "cp pre-commit.example .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && ./manage.py migrate && ./manage.py runserver 0.0.0.0:8000"
     volumes:
       - ./:/app
     depends_on:
