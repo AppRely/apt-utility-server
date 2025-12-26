@@ -7,7 +7,7 @@ from .trk_validation_service import TrkValidationService
 from .video_frame_bulk_insert_service import VideoFrameBulkInsertService
 from .frame_object_bulk_insert_service import FrameObjectBulkInsertService
 from .object_track_bulk_insert_service import ObjectTrackBulkInsertService
-
+import os
 
 class ProjectUploadService:
 
@@ -24,7 +24,7 @@ class ProjectUploadService:
 
             project = Project.objects.create(
                 project_name=project_name,
-                video_name=video_file.name,
+                video_name=os.path.basename(video_path),
                 video_path=video_path,
                 trk_file_name=tracking_file.name,
                 trk_file_path=trk_path,
