@@ -1,6 +1,6 @@
 # Ignore Django Rest Framework (DRF) migrations
-*/migrations/*
-!*/migrations/__init__.py
+*/migrations/
+# !*/migrations/__init__.py
 # !*/migrations/*.py
 
 # Ignore Python bytecode cache files
@@ -8,7 +8,7 @@ __pycache__/
 
 /node_modules
 .DS_Store
-# .env
+.env
 db-data/
 
 # Ignore compiled files
@@ -30,7 +30,7 @@ src/*.log.*
 *.log
 
 # Ignore migrations directories
-# migrations/
+migrations/
 
 celerybeat.pid
 
