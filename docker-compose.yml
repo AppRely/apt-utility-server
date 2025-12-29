@@ -20,16 +20,7 @@ services:
     ports:
       - 8002:8000
     env_file: .env
-    entrypoint:
-      - /bin/bash
-      - -c
-      - |
-        cp /app/docker/entrypoint.sh /tmp/entrypoint.sh
-        sed -i 's/\r$//' /tmp/entrypoint.sh
-        chmod +x /tmp/entrypoint.sh
-        exec /tmp/entrypoint.sh "$@"
-      - --
-    command: sh -c "cp pre-commit.example .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && ./manage.py migrate && ./manage.py runserver 0.0.0.0:8000"
+    command: 'sh -c "cp pre-commit.example .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && ./manage.py migrate && ./manage.py runserver 0.0.0.0:8000"'
     volumes:
       - ./:/app
     depends_on:

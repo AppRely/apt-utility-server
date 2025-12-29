@@ -1,7 +1,5 @@
 # Ignore Django Rest Framework (DRF) migrations
 */migrations/
-# !*/migrations/__init__.py
-# !*/migrations/*.py
 
 # Ignore Python bytecode cache files
 __pycache__/
