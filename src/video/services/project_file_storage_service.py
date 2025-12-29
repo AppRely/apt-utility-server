@@ -26,7 +26,26 @@ class ProjectFileStorageService:
 
         # Convert to MP4 if not already MP4
         final_video_path = video_path
-        if not original_video_name.lower().endswith(".mp4"):
+        
+        def is_browser_compatible(video_path):
+            try:
+                result = subprocess.run(
+                    [
+                        "ffprobe", "-v", "error",
+                        "-select_streams", "v:0",
+                        "-show_entries", "stream=codec_name,pix_fmt",
+                        "-of", "default=noprint_wrappers=1:nokey=1",
+                        video_path
+                    ],
+                    text=True,
+                    check=True
+                )
+                codec, pix_fmt = result.stdout.strip().split("\n")
+                return codec == "h264" and pix_fmt == "yuv420p"
+            except Exception:
+                return False
+
+        if not original_video_name.lower().endswith(".mp4") or not is_browser_compatible(video_path):
             base_name = os.path.splitext(original_video_name)[0]
             final_video_name = f"{base_name}.mp4"
             final_video_path = os.path.join(video_dir, final_video_name)
@@ -40,18 +59,27 @@ class ProjectFileStorageService:
                 # -preset medium: encoding speed/quality tradeoff
                 # -c:a aac: use aac audio codec
                 subprocess.run(
-                    ["ffmpeg", "-y", "-i", video_path, "-c:v", "libx264", "-crf", "23", "-preset", "medium", "-c:a", "aac", final_video_path],
-                    check=True,
-                    capture_output=True
+                    [
+                        "ffmpeg", "-y", "-i", video_path,
+                        "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p",
+                        "-preset", "fast",
+                        "-crf", "23",
+                        "-movflags", "+faststart",
+                        final_video_path
+                    ],
+                    check=True
                 )
-                # Delete original file after successful conversion
-                if os.path.exists(video_path):
-                    os.remove(video_path)
+                
+                # Delete original file only if we successfully created a new one and it's different
+                if final_video_path != video_path and os.path.exists(final_video_path):
+                    if os.path.exists(video_path):
+                        os.remove(video_path)
             except subprocess.CalledProcessError as e:
-                # If conversion fails, we keep the original and log the error
-                # In a real app, you might want to raise an exception here
-                print(f"FFmpeg conversion failed: {e.stderr.decode()}")
+                print(f"FFmpeg conversion failed: {e}")
                 final_video_path = video_path
+        else:
+            final_video_path = video_path
 
         # write trk
         with open(trk_path, "wb") as f:

@@ -29,18 +29,18 @@ class FrameObjectBulkInsertService:
         bulk = []
         total = 0
 
-        frames = {
-            vf.frame_no: vf
-            for vf in VideoFrame.objects.filter(project_id_id=project_id)
-        }
+        frames = dict(
+            VideoFrame.objects
+            .filter(project_id_id=project_id)
+            .values_list("frame_no", "id")
+        )
 
         trk_object_ids = np.array(trk.pTrkiTgt).flatten()
         start = int(trk.T0)
         end = int(trk.T1)
 
         for frame_no in range(start, end + 1):
-            frame = frames.get(frame_no)
-            if not frame:
+            if frame_no not in frames:
                 continue
 
             frame_array = trk.getframe(frame_no)
@@ -53,6 +53,10 @@ class FrameObjectBulkInsertService:
             if arr.ndim != 3:
                 continue
 
+            conf_frame = cls._extract_frame(trk, "pTrkConf", frame_no)
+            tag_frame = cls._extract_frame(trk, "pTrkTag", frame_no)
+            ts_frame = cls._extract_frame(trk, "pTrkTS", frame_no)
+
             for obj_idx in range(arr.shape[-1]):
                 coords = arr[..., obj_idx]
 
@@ -61,34 +65,28 @@ class FrameObjectBulkInsertService:
 
                 bulk.append(
                     FrameObject(
-                        frame=frame,                         # ✅ FK ONLY
+                        frame_id=frames[frame_no],           # ✅ FK ID ONLY
                         object_id=int(trk_object_ids[obj_idx]),
                         coordinates=cls._sanitize(coords.tolist()),
-                        confidence=cls._sanitize(
-                            cls._extract(trk, "pTrkConf", frame_no, obj_idx)
-                        ),
-                        tag=cls._sanitize(
-                            cls._extract(trk, "pTrkTag", frame_no, obj_idx)
-                        ),
-                        timestamp=cls._sanitize(
-                            cls._extract(trk, "pTrkTS", frame_no, obj_idx)
-                        ),
+                        confidence=cls._sanitize(cls._extract_val(conf_frame, obj_idx)),
+                        tag=cls._sanitize(cls._extract_val(tag_frame, obj_idx)),
+                        timestamp=cls._sanitize(cls._extract_val(ts_frame, obj_idx)),
                     )
                 )
 
                 if len(bulk) >= cls.BULK_SIZE:
-                    FrameObject.objects.bulk_create(bulk)
+                    FrameObject.objects.bulk_create(bulk, batch_size=cls.BULK_SIZE)
                     total += len(bulk)
                     bulk.clear()
 
         if bulk:
-            FrameObject.objects.bulk_create(bulk)
+            FrameObject.objects.bulk_create(bulk, batch_size=cls.BULK_SIZE)
             total += len(bulk)
 
         return total
 
     @staticmethod
-    def _extract(trk, attr, frame_no, obj_idx):
+    def _extract_frame(trk, attr, frame_no):
         if not hasattr(trk, attr):
             return None
 
@@ -103,5 +101,10 @@ class FrameObjectBulkInsertService:
         val = np.asarray(val)
         if val.shape[-2] == 1:
             val = val.squeeze(axis=-2)
+        return val
 
-        return val[..., obj_idx].tolist()
+    @staticmethod
+    def _extract_val(frame_data, obj_idx):
+        if frame_data is None:
+            return None
+        return frame_data[..., obj_idx].tolist()

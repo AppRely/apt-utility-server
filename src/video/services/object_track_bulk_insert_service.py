@@ -26,4 +26,4 @@ class ObjectTrackBulkInsertService:
                 )
             )
 
-        ObjectTrack.objects.bulk_create(bulk)
+        ObjectTrack.objects.bulk_create(bulk, batch_size=1000)

@@ -87,17 +87,18 @@ class VideoFrameBulkInsertService:
     @staticmethod
     def insert(*, project_id, trk):
         frames = []
+        append = frames.append
 
         start = int(trk.T0)
         end = int(trk.T1)
 
         for frame_no in range(start, end + 1):
-            frames.append(
+            append(
                 VideoFrame(
                     project_id_id=project_id,
                     frame_no=frame_no,
                 )
             )
 
-        VideoFrame.objects.bulk_create(frames)
+        VideoFrame.objects.bulk_create(frames, batch_size=5000)
         return len(frames)
