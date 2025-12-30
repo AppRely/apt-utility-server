@@ -27,8 +27,11 @@ src/*.log.*
 # Ignore other potential log files
 *.log
 
-# Ignore migrations directories
-migrations/
+
+# Ignore Django migrations except __init__.py
+*/migrations/*
+!*/migrations/__init__.py
+
 
 celerybeat.pid
 
