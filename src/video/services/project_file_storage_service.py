@@ -1,5 +1,6 @@
 import os
 import subprocess
+import json
 from django.conf import settings
 
 
@@ -34,20 +35,26 @@ class ProjectFileStorageService:
                         "ffprobe", "-v", "error",
                         "-select_streams", "v:0",
                         "-show_entries", "stream=codec_name,pix_fmt",
-                        "-of", "default=noprint_wrappers=1:nokey=1",
+                        "-of", "json",
                         video_path
                     ],
+                    capture_output=True,
                     text=True,
                     check=True
                 )
-                codec, pix_fmt = result.stdout.strip().split("\n")
-                return codec == "h264" and pix_fmt == "yuv420p"
+                data = json.loads(result.stdout)
+                if "streams" in data and len(data["streams"]) > 0:
+                    stream = data["streams"][0]
+                    codec = stream.get("codec_name")
+                    pix_fmt = stream.get("pix_fmt")
+                    return codec == "h264" and pix_fmt == "yuv420p"
+                return False
             except Exception:
                 return False
 
         if not original_video_name.lower().endswith(".mp4") or not is_browser_compatible(video_path):
             base_name = os.path.splitext(original_video_name)[0]
-            final_video_name = f"{base_name}.mp4"
+            final_video_name = f"{base_name}_converted.mp4"
             final_video_path = os.path.join(video_dir, final_video_name)
 
             try:
