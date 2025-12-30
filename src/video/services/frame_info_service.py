@@ -11,9 +11,7 @@ class FrameInfoService:
         Uses nearest previous frame as fallback.
         """
 
-        # ------------------------------------
-        # 1. Resolve frame with fallback
-        # ------------------------------------
+
         frame = (
             VideoFrame.objects
             .filter(project_id_id=video_id, frame_no__lte=frame_no)
@@ -24,9 +22,7 @@ class FrameInfoService:
         if not frame:
             raise VideoFrame.DoesNotExist("No valid frame found")
 
-        # ------------------------------------
-        # 2. Fetch all objects in this frame
-        # ------------------------------------
+
         frame_objects = list(
             FrameObject.objects.filter(frame=frame)
         )
@@ -38,9 +34,7 @@ class FrameInfoService:
                 "objects": [],
             }
 
-        # ------------------------------------
-        # 3. Fetch object tracks in ONE query
-        # ------------------------------------
+
         object_ids = {obj.object_id for obj in frame_objects}
 
         tracks = {
@@ -52,9 +46,7 @@ class FrameInfoService:
             )
         }
 
-        # ------------------------------------
-        # 4. Build response
-        # ------------------------------------
+
         objects = []
         for obj in frame_objects:
             track = tracks.get(obj.object_id)
