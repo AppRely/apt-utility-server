@@ -18,7 +18,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import serializers
 # from .models import Video, Project, VideoData, ObjectTrack, ActivityLog
-from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog, Video
+from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog, Video 
 from .serializers import (
     ProjectUploadSerializer, 
     VideoSerializer, 
@@ -33,6 +33,8 @@ from .serializers import (
     BreakObjectSerializer,
     SwapObjectSerializer,
     DeleteObjectSerializer,
+    UndoSerializer,
+    RedoSerializer,
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -1390,3 +1392,115 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "errors": str(e),
                 }, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,)
+
+    # =========================
+    # UNDO
+    # =========================
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Undo last applied operation for the project",
+        request_body=UndoSerializer,
+        responses={
+            200: "Undo successful",
+            400: "Validation error",
+            500: "Internal server error",
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="undo")
+    def undo(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/undo/
+        """
+        try:
+            serializer = UndoSerializer(
+                data=request.data,
+                context={"project_id": pk},
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.execute()
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Undo operation completed successfully",
+                    "data": result,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            logger.error(f"Error during undo operation: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while undoing the operation",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    # =========================
+    # REDO
+    # =========================
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Redo last undone operation for the project",
+        request_body=RedoSerializer,
+        responses={
+            200: "Redo successful",
+            400: "Validation error",
+            500: "Internal server error",
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="redo")
+    def redo(self, request, pk=None):
+        """
+        POST /api/v1/videos/{project_id}/redo/
+        """
+        try:
+            serializer = RedoSerializer(
+                data=request.data,
+                context={"project_id": pk},
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.execute()
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Redo operation completed successfully",
+                    "data": result,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            logger.error(f"Error during redo operation: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while redoing the operation",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
