@@ -1080,6 +1080,8 @@ class LinkObjectSerializer(serializers.Serializer):
                 after_state=after_state,
                 objects_data={
                     "object_1_id": obj1,
+                    "object_1_start": obj1_row.start_frame,
+                    "object_1_end": obj1_row.end_frame,
                     "object_2_id": obj2,
                     "object_2_start": start2,
                     "object_2_end": end2,
@@ -1268,8 +1270,12 @@ class BreakObjectSerializer(serializers.Serializer):
                 after_state=after_state,
                 objects_data={
                     "object_id": object_id,
+                    "object_id_start": obj_track.start_frame,
+                    "object_id_end": obj_track.end_frame,
                     "break_frame": break_frame,
                     "new_object_id": new_object_id,
+                    "new_object_id_start": new_track.start_frame,
+                    "new_object_id_end": new_track.end_frame,
                 }
             )
 
@@ -1547,6 +1553,23 @@ class SwapObjectSerializer(serializers.Serializer):
         rows_updated = 0
 
         with transaction.atomic():
+            # =====================================================
+            # SNAPSHOT — BEFORE (Capture original state)
+            # =====================================================
+            before_state = SnapshotBuilder.build(
+                before_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        frame__frame_no__gte=swap_start,
+                        frame__frame_no__lte=swap_end,
+                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        track_id__in=[obj1_track.track_id, obj2_track.track_id]
+                    ),
+                },
+                after_qs_map={}, # Empty after_qs_map puts everything in 'deleted'
+            )
+
             # 1️⃣ obj1 → TEMP
             FrameObject.objects.filter(
                 frame__project_id_id=project_id,
@@ -1589,6 +1612,41 @@ class SwapObjectSerializer(serializers.Serializer):
 
             obj1_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
             obj2_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
+
+            # =====================================================
+            # SNAPSHOT — AFTER (Capture swapped state)
+            # =====================================================
+            after_state = SnapshotBuilder.build(
+                before_qs_map={}, # Empty before_qs_map puts everything in 'created'
+                after_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        frame__frame_no__gte=swap_start,
+                        frame__frame_no__lte=swap_end,
+                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        track_id__in=[obj1_track.track_id, obj2_track.track_id]
+                    ),
+                },
+            )
+
+            # =====================================================
+            # SNAPSHOT LOG
+            # =====================================================
+            SnapshotLogger.log(
+                project_id=project_id,
+                operation="swap",
+                before_state=before_state,
+                after_state=after_state,
+                objects_data={
+                    "object_1_id": obj1,
+                    "object_1_start": obj1_track.start_frame,
+                    "object_1_end": obj1_track.end_frame,
+                    "object_2_id": obj2,
+                    "object_2_start": obj2_track.start_frame,
+                    "object_2_end": obj2_track.end_frame,
+                },
+            )
 
         return {
             "status": "success",
@@ -1754,8 +1812,8 @@ class DeleteObjectSerializer(serializers.Serializer):
                 after_state=after_state,
                 objects_data={
                     "object_id": object_id,
-                    "start_frame": start_frame,
-                    "end_frame": end_frame,
+                    "object_start": start_frame,
+                    "object_end": end_frame,
                 },
             )
 
