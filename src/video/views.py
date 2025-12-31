@@ -1406,15 +1406,14 @@ class VideoViewSet(viewsets.ModelViewSet):
             500: "Internal server error",
         },
     )
-    @action(detail=True, methods=["post"], url_path="undo")
-    def undo(self, request, pk=None):
+    @action(detail=False, methods=["post"], url_path="undo")
+    def undo(self, request):
         """
         POST /api/v1/videos/{project_id}/undo/
         """
         try:
             serializer = UndoSerializer(
-                data=request.data,
-                context={"project_id": pk},
+                data=request.data
             )
             serializer.is_valid(raise_exception=True)
             result = serializer.execute()
@@ -1462,15 +1461,14 @@ class VideoViewSet(viewsets.ModelViewSet):
             500: "Internal server error",
         },
     )
-    @action(detail=True, methods=["post"], url_path="redo")
-    def redo(self, request, pk=None):
+    @action(detail=False, methods=["post"], url_path="redo")
+    def redo(self, request):
         """
         POST /api/v1/videos/{project_id}/redo/
         """
         try:
             serializer = RedoSerializer(
-                data=request.data,
-                context={"project_id": pk},
+                data=request.data
             )
             serializer.is_valid(raise_exception=True)
             result = serializer.execute()
