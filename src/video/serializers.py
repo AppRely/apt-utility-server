@@ -349,7 +349,9 @@ class ProjectUploadSerializer(serializers.Serializer):
     #     os.makedirs(track_folder, exist_ok=True)
 
     #     return video_folder, track_folder
+ 
 
+ 
     def validate_project_name(self, value):
         if Project.objects.filter(project_name=value).exists():
             raise serializers.ValidationError("Project name already exists.")
