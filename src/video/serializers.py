@@ -1270,8 +1270,8 @@ class BreakObjectSerializer(serializers.Serializer):
                 after_state=after_state,
                 objects_data={
                     "object_id": object_id,
-                    "object_id_start": obj_track.start_frame,
-                    "object_id_end": obj_track.end_frame,
+                    "object_start": obj_track.start_frame,
+                    "object_end": obj_track.end_frame,
                     "break_frame": break_frame,
                     "new_object_id": new_object_id,
                     "new_object_id_start": new_track.start_frame,
