@@ -804,7 +804,7 @@ class ActivityLogRequestSerializer(serializers.Serializer):
 
     def get_data(self):
         """
-        Fetch all activity logs for the given video_id.
+        Fetch all activity logs for the given video_id and return summary counts.
         """
         video_id = self.validated_data['video_id']
 
@@ -817,11 +817,16 @@ class ActivityLogRequestSerializer(serializers.Serializer):
 #         # # 2. Fetch activity logs for these projects
 #         # logs = ActivityLog.objects.filter(project_id__in=project_ids)
 
-        logs = ActivityLog.objects.filter(project_id_id=video_id, is_applied=True).order_by("-activity_updated_at")
+        # Fetch ALL logs for the project (both applied and unapplied) to calculate counts
+        all_logs = ActivityLog.objects.filter(project_id_id=video_id).order_by("-activity_updated_at")
 
-        # 3. Structure the response
+        total_length = all_logs.count()
+        total_undo_can_perform = all_logs.filter(is_applied=True).count()
+        total_redo_can_perform = all_logs.filter(is_applied=False).count()
+
+        # Structure the response - ONLY include applied logs in the list
         logs_data = []
-        for log in logs:
+        for log in all_logs.filter(is_applied=True):
             logs_data.append({
                 "activity_id": log.activity_id,
                 "project_id": log.project_id_id,
@@ -832,6 +837,9 @@ class ActivityLogRequestSerializer(serializers.Serializer):
 
         return {
             "video_id": video_id,
+            "total_length": total_length,
+            "total_undo_can_perform": total_undo_can_perform,
+            "total_redo_can_perform": total_redo_can_perform,
             "logs": logs_data
         }
 #             "total_logs": len(logs_data),
