@@ -1602,18 +1602,19 @@ class SwapObjectSerializer(serializers.Serializer):
                 object_id=TEMP_ID,
             ).update(object_id=obj2)
 
-            # 4️⃣ Swap ObjectTrack ranges
-            obj1_start, obj1_end = obj1_track.start_frame, obj1_track.end_frame
-            obj2_start, obj2_end = obj2_track.start_frame, obj2_track.end_frame
+            # 4️⃣ Update ObjectTrack (partial swap from current_frame onward)
+            obj1_old_end = obj1_track.end_frame
+            obj2_old_end = obj2_track.end_frame
 
-            obj1_track.start_frame = obj2_start
-            obj1_track.end_frame = obj2_end
+
+            obj1_track.start_frame = current_frame
+            obj1_track.end_frame = obj2_old_end
             obj1_track.operation_note = (
                 f"swap_from_frame_{current_frame}_with_{obj2}"
             )
 
-            obj2_track.start_frame = obj1_start
-            obj2_track.end_frame = obj1_end
+            obj2_track.start_frame = current_frame
+            obj2_track.end_frame = obj1_old_end
             obj2_track.operation_note = (
                 f"swap_from_frame_{current_frame}_with_{obj1}"
             )
