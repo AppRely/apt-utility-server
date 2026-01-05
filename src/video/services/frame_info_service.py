@@ -24,7 +24,7 @@ class FrameInfoService:
 
 
         frame_objects = list(
-            FrameObject.objects.filter(frame=frame)
+            FrameObject.objects.filter(frame=frame, is_active=True)
         )
 
         if not frame_objects:

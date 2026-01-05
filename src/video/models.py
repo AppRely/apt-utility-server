@@ -62,7 +62,7 @@ class FrameObject(models.Model):
     confidence = models.JSONField(null=True, blank=True)
     tag = models.JSONField(null=True, blank=True)
     timestamp = models.JSONField(null=True, blank=True)
-    
+    is_active = models.BooleanField(default=True) #for soft delete
     class Meta:
         db_table = "frame_object"
         indexes = [
@@ -105,8 +105,15 @@ class ActivityLog(models.Model):
     operation = models.CharField(max_length=255)
     activity_created_at = models.DateTimeField(auto_now_add=True)
     activity_updated_at = models.DateTimeField(auto_now=True)
+    
+    #  REQUIRED FOR UNDO / REDO
+    is_applied = models.BooleanField(default=True)
+    
     class Meta:
         db_table = "activity_log"
+        indexes = [
+            models.Index(fields=["project_id", "is_applied"]),
+        ]
 
 
 class OperationSnapshot(models.Model):

@@ -22,7 +22,9 @@ from .services.object_lifecycle_service import ObjectLifecycleService
 from .services.frame_object_range_service import FrameObjectRangeService
 from .services.frame_info_service import FrameInfoService 
 from .services.project_upload_service import ProjectUploadService
-# from .models import Project, VideoData, ObjectTrack
+from .services.undo_redo_service import UndoRedoService
+from .services.snapshot_builder import SnapshotBuilder
+from .services.snapshot_logger import SnapshotLogger
 
 
 class VideoSerializer(serializers.ModelSerializer):
@@ -279,19 +281,35 @@ class ActivityLogSerializer(serializers.Serializer):
     def create(self, validated_data):
         project_id = validated_data["project_id"]
 
-        activity = ActivityLog.objects.create(
-            project_id_id=project_id,
-            objects_data=validated_data["objects_data"],
-            operation=validated_data["operation"]
-        )
+        with transaction.atomic():
+            # 1. Clear Redo Stack
+            ActivityLog.objects.filter(
+                project_id_id=project_id, 
+                is_applied=False
+            ).delete()
 
-        return {
-            "activity_id": activity.activity_id,
-            "project_id": activity.project_id_id,
-            "objects_data": activity.objects_data,
-            "operation": activity.operation,
-            "activity_updated_at": activity.activity_updated_at
-        }
+            # 2. Create activity
+            activity = ActivityLog.objects.create(
+                project_id_id=project_id,
+                objects_data=validated_data["objects_data"],
+                operation=validated_data["operation"],
+                is_applied=True,
+            )
+
+            # 3. Limit Undo Stack to 5 levels
+            applied_activities = ActivityLog.objects.filter(
+                project_id_id=project_id,
+                is_applied=True
+            ).order_by("-activity_id")
+
+            if applied_activities.count() > 5:
+                ids_to_keep = applied_activities.values_list("activity_id", flat=True)[:5]
+                ActivityLog.objects.filter(
+                    project_id_id=project_id,
+                    is_applied=True
+                ).exclude(activity_id__in=ids_to_keep).delete()
+
+        return activity
 
 
 class ActivityLogRequestSerializer(serializers.Serializer):
@@ -311,15 +329,29 @@ class ActivityLogRequestSerializer(serializers.Serializer):
 
     def get_data(self):
         """
-        Fetch all activity logs for the given video_id.
+        Fetch all activity logs for the given video_id and return summary counts.
         """
         video_id = self.validated_data['video_id']
 
-        logs = ActivityLog.objects.filter(project_id_id=video_id).order_by("-activity_updated_at")
+#         # # 1. Get all projects linked to this video
+#         # project_ids = list(
+#         #     Project.objects.filter(video_id=video_id)
+#         #                    .values_list('project_id', flat=True)
+#         # )
+
+#         # # 2. Fetch activity logs for these projects
+#         # logs = ActivityLog.objects.filter(project_id__in=project_ids)
+
+        # Fetch ALL logs for the project (both applied and unapplied) to calculate counts
+        all_logs = ActivityLog.objects.filter(project_id_id=video_id).order_by("-activity_updated_at")
+        
+        total_length = all_logs.count()
+        total_undo_can_perform = all_logs.filter(is_applied=True).count()
+        total_redo_can_perform = all_logs.filter(is_applied=False).count()
 
         # 3. Structure the response
         logs_data = []
-        for log in logs:
+        for log in all_logs.filter(is_applied=True):
             logs_data.append({
                 "activity_id": log.activity_id,
                 "project_id": log.project_id_id,
@@ -330,6 +362,9 @@ class ActivityLogRequestSerializer(serializers.Serializer):
 
         return {
             "video_id": video_id,
+            "total_length": total_length,
+            "total_undo_can_perform": total_undo_can_perform,
+            "total_redo_can_perform": total_redo_can_perform,
             "logs": logs_data
         }
 
@@ -421,7 +456,58 @@ class LinkObjectSerializer(serializers.Serializer):
         )
 
         with transaction.atomic():
+            # update_map = {
+            #     field: Case(
+            #         When(**{field: obj2}, then=Value(obj1)),
+            #         default=field,
+            #         output_field=IntegerField()
+            #     )
+            #     for field in object_fields
+            # }
 
+            # rows_updated = qs.update(**update_map)
+
+            # obj1_row = ObjectTrack.objects.get(
+            #     project_id_id=project_id,
+            #     object_id=obj1
+            # )
+            # obj2_row = ObjectTrack.objects.get(
+            #     project_id_id=project_id,
+            #     object_id=obj2
+            # )
+
+            # update_map = ObjectSlotAdapter.build_bulk_replace_map(
+            #     old_object_id=obj2,
+            #     new_object_id=obj1,
+            # )
+
+            #rows_updated = qs.update(**update_map)
+
+            # -------------------------------------------------
+            #  Replace object_2 → object_1 in frames
+            # -------------------------------------------------
+
+            # =====================================================
+            # SNAPSHOT — BEFORE (Capture original state)
+            # =====================================================
+            before_state = SnapshotBuilder.build(
+                before_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        frame__frame_no__gte=start2,
+                        frame__frame_no__lte=end2,
+                        object_id=obj2,
+                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        track_id__in=[obj1_row.track_id, obj2_row.track_id]
+                    ),
+                },
+                after_qs_map={}, # Empty after_qs_map puts everything in 'deleted'
+            )
+
+            # =====================================================
+            # APPLY LINK OPERATION
+            # =====================================================
             rows_updated = FrameObject.objects.filter(
                 frame__project_id_id=project_id,
                 object_id=obj2,
@@ -450,6 +536,42 @@ class LinkObjectSerializer(serializers.Serializer):
             ObjectLifecycleService.deactivate_object(
                 obj2_row,
                 note=f"linked_into_object_{obj1}"
+            )
+
+            # =====================================================
+            # SNAPSHOT — AFTER (Capture merged state)
+            # =====================================================
+            after_state = SnapshotBuilder.build(
+                before_qs_map={}, # Empty before_qs_map puts everything in 'created'
+                after_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        frame__frame_no__gte=start2,
+                        frame__frame_no__lte=end2,
+                        object_id=obj1,
+                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        track_id__in=[obj1_row.track_id, obj2_row.track_id]
+                    ),
+                },
+            )
+
+            # =====================================================
+            # SNAPSHOT LOG
+            # =====================================================
+            SnapshotLogger.log(
+                project_id=project_id,
+                operation="link",
+                before_state=before_state,
+                after_state=after_state,
+                objects_data={
+                    "object_1_id": obj1,
+                    "object_1_start": obj1_row.start_frame,
+                    "object_1_end": obj1_row.end_frame,
+                    "object_2_id": obj2,
+                    "object_2_start": start2,
+                    "object_2_end": end2,
+                },
             )
 
         return {
@@ -529,6 +651,24 @@ class BreakObjectSerializer(serializers.Serializer):
         obj_track = validated_data["obj_track"]
         start_frame = obj_track.start_frame
         end_frame = obj_track.end_frame
+        
+        # ---------------------------
+        # SNAPSHOT: BEFORE STATE
+        # ---------------------------
+        before_state = SnapshotBuilder.build(
+            before_qs_map={
+                "FrameObject": FrameObject.objects.filter(
+                    frame__project_id_id=project_id,
+                    object_id=object_id,
+                    frame__frame_no__gt=break_frame,
+                    frame__frame_no__lte=end_frame,
+                ),
+                "ObjectTrack": ObjectTrack.objects.filter(
+                    track_id=obj_track.track_id
+                ),
+            },
+            after_qs_map={}
+        )
 
         with transaction.atomic():
 
@@ -553,8 +693,8 @@ class BreakObjectSerializer(serializers.Serializer):
             obj_track.operation_note = f"break_from_{start_frame}_to_{break_frame}"
             obj_track.save(update_fields=["end_frame", "operation_note"])
 
-            # Create new object_track
-            ObjectTrack.objects.create(
+            # 4️ Create new object_track
+            new_track = ObjectTrack.objects.create(
                 project_id_id=project_id,
                 object_id=new_object_id,
                 start_frame=break_frame + 1,
@@ -563,6 +703,42 @@ class BreakObjectSerializer(serializers.Serializer):
                 operation_note=f"break_from_{break_frame + 1}_to_{end_frame}"
             )
 
+            # ---------------------------
+            # SNAPSHOT: AFTER STATE
+            # ---------------------------
+            after_state = SnapshotBuilder.build(
+                before_qs_map={},
+                after_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        object_id=new_object_id,
+                        frame__frame_no__gt=break_frame,
+                        frame__frame_no__lte=end_frame,
+                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        track_id__in=[obj_track.track_id, new_track.track_id]
+                    ),
+                }
+            )
+
+            # ---------------------------
+            # SNAPSHOT LOG
+            # ---------------------------
+            SnapshotLogger.log(
+                project_id=project_id,
+                operation="break_object",
+                before_state=before_state,
+                after_state=after_state,
+                objects_data={
+                    "object_id": object_id,
+                    "object_start": obj_track.start_frame,
+                    "object_end": obj_track.end_frame,
+                    "break_frame": break_frame,
+                    "new_object_id": new_object_id,
+                    "new_object_id_start": new_track.start_frame,
+                    "new_object_id_end": new_track.end_frame,
+                }
+            )
 
         return {
             "old_object_id": object_id,
@@ -572,6 +748,204 @@ class BreakObjectSerializer(serializers.Serializer):
             "rows_updated_in_frame_object": rows_updated,
         }
 
+
+# class SwapObjectSerializer(serializers.Serializer):
+#     """
+#     HARD swap of two object IDs from current_frame onward.
+#     Canonical swap implementation.
+#     """
+
+#     object_1_id = serializers.IntegerField(required=True)
+#     object_2_id = serializers.IntegerField(required=True)
+#     current_frame = serializers.IntegerField(required=True)
+
+#     def validate(self, data):
+#         project_id = self.context.get("project_id") or self.context.get("video_id")
+#         if not project_id:
+#             raise serializers.ValidationError("Missing project_id in context.")
+
+#         if data["object_1_id"] == data["object_2_id"]:
+#             raise serializers.ValidationError("Object IDs cannot be the same.")
+
+#         if data["current_frame"] < 0:
+#             raise serializers.ValidationError({"current_frame": "Must be >= 0"})
+
+#         try:
+#             obj1_track = ObjectTrack.objects.get(
+#                 project_id_id=project_id,
+#                 object_id=data["object_1_id"],
+#             )
+#         except ObjectTrack.DoesNotExist:
+#             raise serializers.ValidationError(
+#                 {"object_1_id": f"Object {data['object_1_id']} not found"}
+#             )
+
+#         try:
+#             obj2_track = ObjectTrack.objects.get(
+#                 project_id_id=project_id,
+#                 object_id=data["object_2_id"],
+#             )
+#         except ObjectTrack.DoesNotExist:
+#             raise serializers.ValidationError(
+#                 {"object_2_id": f"Object {data['object_2_id']} not found"}
+#             )
+
+#         current_frame = data["current_frame"]
+
+#         if current_frame < 0:
+#             raise serializers.ValidationError(
+#                 {"current_frame": "current_frame must be >= 0"}
+#             )
+
+#         if current_frame >= obj1_track.end_frame:
+#             raise serializers.ValidationError(
+#                 {"current_frame": "No frames left to swap for object_1"}
+#             )
+
+#         if current_frame >= obj2_track.end_frame:
+#             raise serializers.ValidationError(
+#                 {"current_frame": "No frames left to swap for object_2"}
+#             )
+
+#         data["project_id"] = project_id
+#         data["obj1_track"] = obj1_track
+#         data["obj2_track"] = obj2_track
+
+#         return data
+
+#     def swap_data(self):
+#         data = self.validated_data
+#         project_id = data["project_id"]
+#         obj1 = data["object_1_id"]
+#         obj2 = data["object_2_id"]
+#         current_frame = data["current_frame"]
+
+#         obj1_track = data["obj1_track"]
+#         obj2_track = data["obj2_track"]
+
+#         swap_start = current_frame + 1
+
+#         obj1_end = obj1_track.end_frame
+#         obj2_end = obj2_track.end_frame
+
+#         TEMP_ID = -int(project_id)
+#         rows_updated = 0
+
+#         with transaction.atomic():
+#             # =====================================================
+#             # SNAPSHOT — BEFORE (Capture original state)
+#             # =====================================================
+#             before_state = SnapshotBuilder.build(
+#                 before_qs_map={
+#                     "FrameObject": FrameObject.objects.filter(
+#                         frame__project_id_id=project_id,
+#                         frame__frame_no__gte=swap_start
+#                     ).filter(
+#                         Q(object_id=obj1, frame__frame_no__lte=obj1_end) |
+#                         Q(object_id=obj2, frame__frame_no__lte=obj2_end)
+#                     ),
+#                     "ObjectTrack": ObjectTrack.objects.filter(
+#                         track_id__in=[obj1_track.track_id, obj2_track.track_id]
+#                     ),
+#                 },
+#                 after_qs_map={}, # Empty after_qs_map puts everything in 'deleted'
+#             )
+
+#             # 1️⃣ object_1 → TEMP_ID
+#             FrameObject.objects.filter(
+#                 frame__project_id_id=project_id,
+#                 frame__frame_no__gte=swap_start,
+#                 frame__frame_no__lte=swap_end,
+#                 object_id=obj1,
+#                 frame__frame_no__gte=swap_start,
+#                 frame__frame_no__lte=obj1_end,
+#             ).update(object_id=TEMP_ID)
+
+#             # 2️⃣ obj2 → obj1
+#             FrameObject.objects.filter(
+#                 frame__project_id_id=project_id,
+#                 frame__frame_no__gte=swap_start,
+#                 frame__frame_no__lte=swap_end,
+#                 object_id=obj2,
+#                 frame__frame_no__gte=swap_start,
+#                 frame__frame_no__lte=obj2_end,
+#             ).update(object_id=obj1)
+
+#             # 3️⃣ TEMP → obj2 (restricted to swap window)
+#             rows_updated = FrameObject.objects.filter(
+#                 frame__project_id_id=project_id,
+#                 frame__frame_no__gte=swap_start,
+#                 frame__frame_no__lte=swap_end,
+#                 object_id=TEMP_ID,
+#                 frame__frame_no__gte=swap_start,
+#                 frame__frame_no__lte=obj1_end,
+#             ).update(object_id=obj2)
+
+#             # 📝 Audit note only
+#             obj1_track.operation_note = (
+#                 f"swap_from_frame_{current_frame}_with_{obj2}"
+#             )
+#             obj2_track.operation_note = (
+#                 f"swap_from_frame_{current_frame}_with_{obj1}"
+#             )
+
+#             obj1_track.save(update_fields=["operation_note"])
+#             obj2_track.save(update_fields=["operation_note"])
+
+#             # =====================================================
+#             # SNAPSHOT — AFTER (Capture swapped state)
+#             # =====================================================
+#             after_state = SnapshotBuilder.build(
+#                 before_qs_map={}, # Empty before_qs_map puts everything in 'created'
+#                 after_qs_map={
+#                     "FrameObject": FrameObject.objects.filter(
+#                         frame__project_id_id=project_id,
+#                         frame__frame_no__gte=swap_start
+#                     ).filter(
+#                         Q(object_id=obj1, frame__frame_no__lte=obj2_end) |
+#                         Q(object_id=obj2, frame__frame_no__lte=obj1_end)
+#                     ),
+#                     "ObjectTrack": ObjectTrack.objects.filter(
+#                         track_id__in=[obj1_track.track_id, obj2_track.track_id]
+#                     ),
+#                 },
+#             )
+
+#             # =====================================================
+#             # SNAPSHOT LOG
+#             # =====================================================
+#             SnapshotLogger.log(
+#                 project_id=project_id,
+#                 operation="swap",
+#                 before_state=before_state,
+#                 after_state=after_state,
+#                 objects_data={
+#                     "object_1_id": obj1,
+#                     "object_2_id": obj2,
+#                     "current_frame": current_frame,
+#                 },
+#             )
+
+#         return {
+#             "status": "success",
+#             "message": "Objects swapped successfully",
+#             "video_id": project_id,
+#             "rows_updated": rows_updated,
+#             "object_track_object_1": {
+#                 "object_id": obj1,
+#                 "start_frame": obj1_track.start_frame,
+#                 "end_frame": obj1_track.end_frame,
+#                 "object_status": obj1_track.object_status,
+#                 "operation_note": obj1_track.operation_note,
+#             },
+#             "object_track_object_2": {
+#                 "object_id": obj2,
+#                 "start_frame": obj2_track.start_frame,
+#                 "end_frame": obj2_track.end_frame,
+#                 "object_status": obj2_track.object_status,
+#                 "operation_note": obj2_track.operation_note,
+#             },
+#         }
 
 class SwapObjectSerializer(serializers.Serializer):
     """
@@ -620,11 +994,11 @@ class SwapObjectSerializer(serializers.Serializer):
         data["project_id"] = project_id
         data["obj1_track"] = obj1_track
         data["obj2_track"] = obj2_track
+
         return data
 
     def swap_data(self):
         data = self.validated_data
-
         project_id = data["project_id"]
         obj1 = data["object_1_id"]
         obj2 = data["object_2_id"]
@@ -640,6 +1014,23 @@ class SwapObjectSerializer(serializers.Serializer):
         rows_updated = 0
 
         with transaction.atomic():
+            # =====================================================
+            # SNAPSHOT — BEFORE (Capture original state)
+            # =====================================================
+            before_state = SnapshotBuilder.build(
+                before_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        frame__frame_no__gte=swap_start,
+                        frame__frame_no__lte=swap_end,
+                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        track_id__in=[obj1_track.track_id, obj2_track.track_id]
+                    ),
+                },
+                after_qs_map={}, # Empty after_qs_map puts everything in 'deleted'
+            )
+
             # 1️⃣ obj1 → TEMP
             FrameObject.objects.filter(
                 frame__project_id_id=project_id,
@@ -664,24 +1055,60 @@ class SwapObjectSerializer(serializers.Serializer):
                 object_id=TEMP_ID,
             ).update(object_id=obj2)
 
-            # 4️⃣ Swap ObjectTrack ranges
-            obj1_start, obj1_end = obj1_track.start_frame, obj1_track.end_frame
-            obj2_start, obj2_end = obj2_track.start_frame, obj2_track.end_frame
+            # 4️⃣ Update ObjectTrack (partial swap from current_frame onward)
+            obj1_old_end = obj1_track.end_frame
+            obj2_old_end = obj2_track.end_frame
 
-            obj1_track.start_frame = obj2_start
-            obj1_track.end_frame = obj2_end
+
+            obj1_track.start_frame = current_frame
+            obj1_track.end_frame = obj2_old_end
             obj1_track.operation_note = (
                 f"swap_from_frame_{current_frame}_with_{obj2}"
             )
 
-            obj2_track.start_frame = obj1_start
-            obj2_track.end_frame = obj1_end
+            obj2_track.start_frame = current_frame
+            obj2_track.end_frame = obj1_old_end
             obj2_track.operation_note = (
                 f"swap_from_frame_{current_frame}_with_{obj1}"
             )
 
             obj1_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
             obj2_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
+
+            # =====================================================
+            # SNAPSHOT — AFTER (Capture swapped state)
+            # =====================================================
+            after_state = SnapshotBuilder.build(
+                before_qs_map={}, # Empty before_qs_map puts everything in 'created'
+                after_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        frame__frame_no__gte=swap_start,
+                        frame__frame_no__lte=swap_end,
+                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        track_id__in=[obj1_track.track_id, obj2_track.track_id]
+                    ),
+                },
+            )
+
+            # =====================================================
+            # SNAPSHOT LOG
+            # =====================================================
+            SnapshotLogger.log(
+                project_id=project_id,
+                operation="swap",
+                before_state=before_state,
+                after_state=after_state,
+                objects_data={
+                    "object_1_id": obj1,
+                    "object_1_start": obj1_track.start_frame,
+                    "object_1_end": obj1_track.end_frame,
+                    "object_2_id": obj2,
+                    "object_2_start": obj2_track.start_frame,
+                    "object_2_end": obj2_track.end_frame,
+                },
+            )
 
         return {
             "status": "success",
@@ -750,6 +1177,20 @@ class DeleteObjectSerializer(serializers.Serializer):
         data["obj_track"] = obj_track
         return data
 
+    # ---------------------------
+    # DYNAMIC SLOT DISCOVERY
+    # ---------------------------
+    # @staticmethod
+    # def _get_object_id_fields():
+    #     return [
+    #         field.name
+    #         for field in VideoData._meta.fields
+    #         if field.name.startswith("object_") and field.name.endswith("_id")
+    #     ]
+
+    # ---------------------------
+    # CREATE (BEHAVIOR UNCHANGED + SNAPSHOT ADDED)
+    # ---------------------------
     def create(self, validated_data):
         project_id = self.context["project_id"]
 
@@ -759,17 +1200,73 @@ class DeleteObjectSerializer(serializers.Serializer):
         obj_track = validated_data["obj_track"]
 
         with transaction.atomic():
-            affected_frames, _ = FrameObject.objects.filter(
+            # ---------------------------
+            # SNAPSHOT: BEFORE STATE
+            # ---------------------------
+            before_state = SnapshotBuilder.build(
+                before_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        object_id=object_id,
+                        frame__frame_no__gte=start_frame,
+                        frame__frame_no__lte=end_frame,
+                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        project_id_id=project_id,
+                        object_id=object_id,
+                    ),
+                },
+                after_qs_map={}
+            )
+
+            # ---- APPLY SOFT DELETE ----
+            affected_frames = FrameObject.objects.filter(
                 frame__project_id_id=project_id,
                 object_id=object_id,
                 frame__frame_no__gte=start_frame,
-                frame__frame_no__lte=end_frame
-            ).delete()
+                frame__frame_no__lte=end_frame,
+            ).update(is_active=False)
 
             ObjectLifecycleService.deactivate_object(
                 obj_track,
                 note=f"deleted_frames_{start_frame}_to_{end_frame}"
             )
+
+            # ---------------------------
+            # SNAPSHOT: AFTER STATE
+            # ---------------------------
+            after_state = SnapshotBuilder.build(
+                before_qs_map={},
+                after_qs_map={
+                    "FrameObject": FrameObject.objects.filter(
+                        frame__project_id_id=project_id,
+                        object_id=object_id,
+                        frame__frame_no__gte=start_frame,
+                        frame__frame_no__lte=end_frame,
+                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(
+                        project_id_id=project_id,
+                        object_id=object_id,
+                    ),
+                }
+            )
+
+            # ---------------------------
+            # SNAPSHOT LOG
+            # ---------------------------
+            SnapshotLogger.log(
+                project_id=project_id,
+                operation="delete",
+                before_state=before_state,
+                after_state=after_state,
+                objects_data={
+                    "object_id": object_id,
+                    "object_start": start_frame,
+                    "object_end": end_frame,
+                },
+            )
+
+
 
         return {
             "object_id": object_id,
@@ -778,3 +1275,32 @@ class DeleteObjectSerializer(serializers.Serializer):
             "object_status": 0
         }
 
+
+class UndoSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField(required=True)
+
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Invalid project_id")
+        return value
+
+    def execute(self):
+        try:
+            return UndoRedoService.undo(self.validated_data["project_id"])
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
+
+
+class RedoSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField(required=True)
+
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Invalid project_id")
+        return value
+
+    def execute(self):
+        try:
+            return UndoRedoService.redo(self.validated_data["project_id"])
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
