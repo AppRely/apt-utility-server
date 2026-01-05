@@ -34,5 +34,5 @@ celerybeat.pid
 
 static
 
-media/videos/
-media/trks/
+media/track_folder/
+media/video_folder/
