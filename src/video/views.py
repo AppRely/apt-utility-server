@@ -35,6 +35,7 @@ from .serializers import (
     DeleteObjectSerializer,
     UndoSerializer,
     RedoSerializer,
+    TrkExportSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -1502,3 +1503,66 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Export updated TRK file (versioned).",
+        request_body=TrkExportSerializer,
+        responses={
+            200: "TRK export successful",
+            400: "Validation error",
+            500: "Export failed",
+        },
+    )
+    @action(detail=False, methods=["post"], url_path="export-trk")
+    def export_trk(self, request):
+        """
+        POST /api/v1/videos/export-trk/
+        """
+        try:
+            serializer = TrkExportSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            result = serializer.export()
+
+            download_url = request.build_absolute_uri(
+                f"/media/trk_exports/{result['project_id']}/"
+                f"project_{result['project_id']}_v{result['trk_version']}.trk"
+            )
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "TRK exported successfully",
+                    "data": {
+                        "project_id": result["project_id"],
+                        "trk_version": result["trk_version"],
+                        "download_url": download_url,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            logger.error("TRK export failed", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Failed to export TRK",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+

@@ -25,7 +25,8 @@ from .services.project_upload_service import ProjectUploadService
 from .services.undo_redo_service import UndoRedoService
 from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
-
+from .services.trk_export_service import TrkExportService
+from django.db.models import Exists, OuterRef
 
 class VideoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -581,6 +582,7 @@ class FrameInfoSerializer(serializers.Serializer):
 
 
 class ListUniqueIdsSerializer(serializers.Serializer):
+
     def validate(self, data):
         project_id = self.context.get("project_id")
 
@@ -595,17 +597,28 @@ class ListUniqueIdsSerializer(serializers.Serializer):
     def get_all_ids(self):
         project_id = self.context.get("project_id")
 
-        ids = (
-            ObjectTrack.objects.filter(project_id_id=project_id,object_status=1)
+        active_with_data = (
+            ObjectTrack.objects
+            .filter(
+                project_id_id=project_id,
+                object_status=1
+            )
+            .filter(
+                Exists(
+                    FrameObject.objects.filter(
+                        object_id=OuterRef("object_id"),
+                        frame__project_id_id=project_id
+                    )
+                )
+            )
             .order_by("object_id")
             .values_list("object_id", flat=True)
         )
 
         return {
             "project_id": project_id,
-            "unique_ids": list(ids),
+            "unique_ids": list(active_with_data),
         }
-
 
 class ObjectTrackDetailsSerializer(serializers.Serializer):
     object_id = serializers.IntegerField(required=True)
@@ -1864,3 +1877,17 @@ class RedoSerializer(serializers.Serializer):
             return UndoRedoService.redo(self.validated_data["project_id"])
         except ValueError as e:
             raise serializers.ValidationError(str(e))
+
+
+class TrkExportSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField(required=True)
+
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Invalid project_id")
+        return value
+
+    def export(self):
+        return TrkExportService.export(
+            project_id=self.validated_data["project_id"]
+        )

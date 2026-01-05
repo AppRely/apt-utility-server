@@ -1,6 +1,5 @@
-
 from django.core.exceptions import ValidationError
-from ..models import ObjectTrack
+from ..models import ObjectTrack, FrameObject 
 
 
 class ObjectLifecycleService:
@@ -44,10 +43,27 @@ class ObjectLifecycleService:
     @staticmethod
     def fetch(project_id: int, object_id: int, frame: int):
         try:
-            obj = ObjectTrack.objects.get(
+            # obj = ObjectTrack.objects.get(
+            #     project_id_id=project_id,
+            #     object_id=object_id
+            # )
+
+            obj = ObjectTrack.objects.filter(
                 project_id_id=project_id,
-                object_id=object_id
-            )
+                object_id=object_id,
+                start_frame__lte=frame,
+                end_frame__gte=frame,
+                object_status=1,
+            ).first()
+
+            if not obj:
+                return {
+                    "project_id": project_id,
+                    "object_id": object_id,
+                    "message": "No active lifecycle at this frame",
+                    "is_active": False,
+                }
+
         except ObjectTrack.DoesNotExist:
             return {
                 "project_id": project_id,
@@ -65,6 +81,21 @@ class ObjectLifecycleService:
                 "operation_note": obj.operation_note,
             }
 
+        # FrameObject existence check (TRK truth)
+        has_data = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            frame__frame_no=frame,
+            object_id=object_id,
+        ).exists()
+
+        if not has_data:
+            return {
+                "project_id": project_id,
+                "object_id": object_id,
+                "message": "No data at this frame",
+                "is_active": False,
+            }
+
         return {
             "project_id": project_id,
             "object_id": object_id,
@@ -73,4 +104,5 @@ class ObjectLifecycleService:
             "is_inside": obj.start_frame <= frame <= obj.end_frame,
             "object_status": obj.object_status,
             "operation_note": obj.operation_note,
+            "is_active": True,
         }
