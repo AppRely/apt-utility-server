@@ -76,7 +76,7 @@ class FrameObjectRangeService:
             results[obj_id]["frames"].append({
                 "frame_id": target_frame_no,
                 "coordinates": obj.coordinates,
-                "confidence": obj.confidence,
-                "tag": obj.tag,
-                "timestamp": obj.timestamp
+                # "confidence": obj.confidence,
+                # "tag": obj.tag,
+                # "timestamp": obj.timestamp
             })

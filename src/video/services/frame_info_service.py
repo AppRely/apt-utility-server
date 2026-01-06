@@ -54,9 +54,9 @@ class FrameInfoService:
             objects.append({
                 "object_id": obj.object_id,
                 "coordinates": obj.coordinates,
-                "confidence": obj.confidence,
-                "tag": obj.tag,
-                "timestamp": obj.timestamp,
+                # "confidence": obj.confidence,
+                # "tag": obj.tag,
+                # "timestamp": obj.timestamp,
                 "start_frame": track.start_frame if track else None,
                 "end_frame": track.end_frame if track else None,
             })
