@@ -25,6 +25,7 @@ from .services.project_upload_service import ProjectUploadService
 from .services.undo_redo_service import UndoRedoService
 from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
+from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
 
 
 class VideoSerializer(serializers.ModelSerializer):
@@ -1864,3 +1865,50 @@ class RedoSerializer(serializers.Serializer):
             return UndoRedoService.redo(self.validated_data["project_id"])
         except ValueError as e:
             raise serializers.ValidationError(str(e))
+
+##########################################
+# frame_object_range_no_fallback
+#########################################
+
+class FrameObjectRangeNoFallbackSerializer(serializers.Serializer):
+    """
+    Serializer to handle fetching object data for a range of frames without fallback.
+    """
+    start = serializers.IntegerField(required=True, help_text="Start frame id (inclusive)")
+    end = serializers.IntegerField(required=True, help_text="End frame id (inclusive, max span 900)")
+    video_id = serializers.IntegerField(required=True, help_text="Video ID (passed from view)")
+
+    def validate(self, attrs):
+        start = attrs.get('start')
+        end = attrs.get('end')
+        video_id = attrs.get('video_id')
+
+        if start < 0 or end < 0:
+            raise serializers.ValidationError({"start": "Start frame number must be non-negative"})
+        
+        if start > end:
+            raise serializers.ValidationError({"start": "start must be <= end"})
+
+        if end - start + 1 > 900:
+            raise serializers.ValidationError({"end": "range cannot exceed 900 frames"})
+        
+        if not Project.objects.filter(project_id=video_id).exists():
+            raise serializers.ValidationError({"video_id": "Invalid video_id"})
+
+        return attrs
+
+    def get_data(self):
+        data = self.validated_data
+
+        objects = FrameObjectRangeNoFallbackService.fetch(
+            project_id=data["video_id"],
+            start_frame=data["start"],
+            end_frame=data["end"]
+        )
+
+        return {
+            "video_id": data["video_id"],
+            "start_frame": data["start"],
+            "end_frame": data["end"],
+            "objects": objects,
+        }
