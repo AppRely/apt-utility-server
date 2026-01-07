@@ -93,7 +93,47 @@ class ProjectFileStorageService:
             for chunk in tracking_file.chunks():
                 f.write(chunk)
 
-        return final_video_path, trk_path
+        # Extract Metadata
+        metadata = {}
+        try:
+            cmd = [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,r_frame_rate,duration,nb_frames",
+                "-of", "json", final_video_path
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+            
+            if data.get('streams'):
+                stream = data['streams'][0]
+                
+                fps_str = stream.get('r_frame_rate', '30/1')
+                if '/' in fps_str:
+                    num, den = map(int, fps_str.split('/'))
+                    fps = num / den if den != 0 else 30.0
+                else:
+                    fps = float(fps_str)
+                
+                duration = float(stream.get('duration', 0))
+                total_frames = int(stream.get('nb_frames', 0))
+                
+                if duration == 0 and total_frames > 0 and fps > 0:
+                    duration = total_frames / fps
+                elif total_frames == 0 and duration > 0 and fps > 0:
+                    total_frames = int(duration * fps)
+
+                metadata = {
+                    "fps": round(fps, 2),
+                    "width": stream.get('width'),
+                    "height": stream.get('height'),
+                    "duration": round(duration, 2),
+                    "total_frames": total_frames
+                }
+        except Exception as e:
+            print(f"Metadata extraction failed: {e}")
+
+        return final_video_path, trk_path, metadata
+
 
     @staticmethod
     def build_stream_urls(project_id, request):

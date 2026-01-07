@@ -377,12 +377,16 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = [
             "project_id",
             "project_name",
-            # "video_id",
             "video_name",
             "video_path", 
             "trk_file_name",
             "trk_file_path",
             "project_status",
+            "fps",
+            "width",
+            "height",
+            "duration",
+            "total_frames",
             "created_at",
             "updated_at",
         ]
