@@ -7,6 +7,7 @@ from .trk_validation_service import TrkValidationService
 from .video_frame_bulk_insert_service import VideoFrameBulkInsertService
 from .frame_object_bulk_insert_service import FrameObjectBulkInsertService
 from .object_track_bulk_insert_service import ObjectTrackBulkInsertService
+from .object_track_rebuild_service import ObjectTrackRebuildService
 import os
 
 class ProjectUploadService:
@@ -47,10 +48,12 @@ class ProjectUploadService:
             if rows == 0:
                 raise ValueError("Upload failed — no TRK frames inserted")
 
-            ObjectTrackBulkInsertService.insert(
-                project_id=project.project_id,
-                trk=trk
-            )
+            # ObjectTrackBulkInsertService.insert(
+            #     project_id=project.project_id,
+            #     trk=trk
+            # )
+
+            ObjectTrackRebuildService.rebuild(project_id=project.project_id)
 
         # AFTER DB INSERT → store STREAM URLs
         try:

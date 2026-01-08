@@ -145,31 +145,38 @@ class TrkExportService:
         new_idx = TrkExportService._ensure_target(trk, op["new_object_id"])
 
         T0, T = trk.T0, trk.T
-        break_rel = max(op["break_frame"] - T0, 0)
+        break_frame = op["break_frame"]
+
+        break_rel = max(break_frame - T0, 0)
         fs = np.arange(break_rel + 1, T, dtype=np.int32)
 
+        if fs.size == 0:   # 🔑 GUARD
+            trk.pTrk.endframes[old_idx] = break_frame
+            trk.pTrk.startframes[new_idx] = break_frame + 1
+            return
+
         p = TrkExportService._alloc_payload(trk, fs.size, 1)
+
+        frame = None  # 🔑 INIT
         for i, f_rel in enumerate(fs):
             frame = trk.getframe(T0 + f_rel)
-            if frame is None:
-                p[..., i, 0] = np.nan
-            else:
-                p[..., i, 0] = TrkExportService._normalize_coords(
-                    frame[..., old_idx]
-                )
+            p[..., i, 0] = (
+                np.nan if frame is None
+                else TrkExportService._normalize_coords(frame[..., old_idx])
+            )
 
         trk.settargetframe(p, targets=[new_idx], fs=fs)
 
         nan = TrkExportService._alloc_payload(trk, fs.size, 1, fill_nan=True)
         trk.settargetframe(nan, targets=[old_idx], fs=fs)
 
+        trk.pTrk.endframes[old_idx] = break_frame
+        trk.pTrk.startframes[new_idx] = break_frame + 1
+
+
+
     @staticmethod
     def _apply_swap(trk, op):
-        """
-        Swap two objects using stored start/end ranges.
-        No consolidate, no reshape, NaN-safe.
-        """
-
         idx1 = TrkExportService._target_index(trk, op["object_1_id"])
         idx2 = TrkExportService._target_index(trk, op["object_2_id"])
 
@@ -179,12 +186,12 @@ class TrkExportService:
         T0, T = trk.T0, trk.T
 
         swap_start = max(op["object_1_start"], op["object_2_start"])
-        swap_end = max(op["object_1_end"], op["object_2_end"])
+        swap_end   = min(op["object_1_end"],   op["object_2_end"])
 
         start_rel = max(swap_start - T0, 0)
-        end_rel = min(swap_end - T0 + 1, T)
+        end_rel   = min(swap_end - T0 + 1, T)
 
-        if start_rel >= end_rel:
+        if start_rel >= end_rel:   # GUARD
             return
 
         fs = np.arange(start_rel, end_rel, dtype=np.int32)
@@ -192,30 +199,19 @@ class TrkExportService:
         p1 = TrkExportService._alloc_payload(trk, fs.size, 1)
         p2 = TrkExportService._alloc_payload(trk, fs.size, 1)
 
+        frame = None  # INIT
         for i, f_rel in enumerate(fs):
             frame = trk.getframe(T0 + f_rel)
-
             if frame is None:
                 p1[..., i, 0] = np.nan
                 p2[..., i, 0] = np.nan
             else:
-                p1[..., i, 0] = TrkExportService._normalize_coords(
-                    frame[..., idx2]
-                )
-                p2[..., i, 0] = TrkExportService._normalize_coords(
-                    frame[..., idx1]
-                )
+                p1[..., i, 0] = TrkExportService._normalize_coords(frame[..., idx2])
+                p2[..., i, 0] = TrkExportService._normalize_coords(frame[..., idx1])
 
         trk.settargetframe(p1, targets=[idx1], fs=fs)
         trk.settargetframe(p2, targets=[idx2], fs=fs)
 
-        logger.info(
-            "[TRK-SWAP] idx=%d <-> idx=%d start=%d end=%d",
-            idx1,
-            idx2,
-            swap_start,
-            swap_end,
-        )
 
     # =====================================================
     # 🔑 FINAL INVARIANT ENFORCER (THE FIX)
@@ -241,6 +237,7 @@ class TrkExportService:
 
             block.ntargets = nt
 
+            # Pad ONLY missing targets
             while len(block.data) < nt:
                 ref = block.data[0]
                 block.data.append(np.full_like(ref, np.nan))
@@ -273,7 +270,13 @@ class TrkExportService:
 
     @staticmethod
     def _normalize_coords(c):
-        return c[..., 0] if c.ndim == 3 else c
+        """
+        Always return shape (nlandmarks, d)
+        """
+        if c is None:
+            return np.nan
+        return np.squeeze(c, axis=-1) if c.ndim > 2 else c
+
 
     @staticmethod
     def _target_index(trk, obj_id):
