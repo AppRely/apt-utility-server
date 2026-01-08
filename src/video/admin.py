@@ -20,6 +20,11 @@ class ProjectAdmin(BaseAdmin):
         "trk_file_name",
         "trk_file_path",
         "project_status",
+        "fps",
+        "width",
+        "height",
+        "duration",
+        "total_frames",
         "created_at",
         "updated_at",
     )

@@ -15,7 +15,7 @@ class ProjectUploadService:
     def create(cls, *, project_name, video_file, tracking_file, request):
 
         # OUTSIDE DB transaction
-        video_path, trk_path = ProjectFileStorageService.save(
+        video_path, trk_path, metadata = ProjectFileStorageService.save(
             project_name, video_file, tracking_file
         )
 
@@ -30,6 +30,12 @@ class ProjectUploadService:
                 trk_file_path=trk_path,
                 project_status="inprogress",
                 status="Completed",
+                # Save Metadata
+                fps=metadata.get('fps'),
+                width=metadata.get('width'),
+                height=metadata.get('height'),
+                duration=metadata.get('duration'),
+                total_frames=metadata.get('total_frames'),
             )
 
             # REMOVED INVALID video_id LOGIC
