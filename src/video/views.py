@@ -1,3 +1,5 @@
+import json
+import gzip
 import logging
 import os
 import base64
@@ -1250,10 +1252,14 @@ class VideoViewSet(viewsets.ModelViewSet):
 
             payload = serializer.get_data()
 
+            json_data = json.dumps(payload)
+            compressed_data = gzip.compress(json_data.encode('utf-8'))
+
             return Response(
                 {
                     "status": "success",
-                    "data": payload,
+                    "data": compressed_data.hex(),
+					"compressed": True,
                 },
                 status=status.HTTP_200_OK,
             )
