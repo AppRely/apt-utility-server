@@ -35,6 +35,7 @@ from .serializers import (
     DeleteObjectSerializer,
     UndoSerializer,
     RedoSerializer,
+    FrameObjectRangeNoFallbackSerializer,
     TrkExportSerializer
 )
 
@@ -1500,6 +1501,76 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "status": "error",
                     "message": "Something went wrong while redoing the operation",
                     "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    ##########################
+    # Frame Object Range No Fallback
+    ##########################
+    @swagger_auto_schema(
+        operation_description="Return object/coordinate data for a consecutive frame range (max 900 frames) from DB without fallback.",
+        manual_parameters=[
+            openapi.Parameter(
+                'start',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='Start frame id (inclusive)',
+            ),
+            openapi.Parameter(
+                'end',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description='End frame id (inclusive, max span 900)',
+            ),
+        ],
+        responses={
+            200: 'JSON payload for the requested frame range',
+            400: 'Validation error or frame out of range',
+            404: 'Project not found',
+            500: 'Server error'
+            },
+    )
+    @action(detail=True, methods=['get'], url_path='frame-object-range-no-fallback')
+    def frame_object_range_no_fallback(self, request, pk=None):
+        """
+        GET /api/v1/videos/{id}/frame-object-range-no-fallback?start=<start>&end=<end>
+        Retrieve object tracking data for a contiguous range of frames without fallback.
+        """
+        try:
+            data = request.query_params.copy()
+            data['video_id'] = pk
+            
+            serializer = FrameObjectRangeNoFallbackSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+
+            payload = serializer.get_data()
+
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
+            )
+           
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid query parameters",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.error("Error fetching frame object range without fallback", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while fetching frame data",
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
