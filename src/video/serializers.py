@@ -26,6 +26,7 @@ from .services.undo_redo_service import UndoRedoService
 from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
 from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
+from .services.project_deletion_service import ProjectDeletionService
 from .services.trk_export_service import TrkExportService
 from django.db.models import Exists, OuterRef
 
@@ -391,6 +392,22 @@ class ProjectSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+class DeleteProjectSerializer(serializers.Serializer):
+    """
+    Serializer to validate project deletion request.
+    """
+    project_id = serializers.IntegerField(required=True)
+
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Project not found.")
+        return value
+
+    def execute(self):
+        return ProjectDeletionService.delete_project(
+            self.validated_data["project_id"]
+        )
 
 # # =============================
 # # FRAME SERIALIZERS

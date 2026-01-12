@@ -38,7 +38,8 @@ from .serializers import (
     UndoSerializer,
     RedoSerializer,
     FrameObjectRangeNoFallbackSerializer,
-    TrkExportSerializer
+    TrkExportSerializer,
+    DeleteProjectSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -1643,3 +1644,63 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    @swagger_auto_schema(
+        method="delete",
+        operation_description="Delete a project, its database records, and all associated local files (video, trk, exports).",
+        responses={
+            200: openapi.Response(
+                description="Project deleted successfully",
+                examples={"application/json": {"status": "success", "message": "Project deleted successfully"}}
+            ),
+            400: "Validation error",
+            404: "Project not found",
+            500: "Internal server error",
+        },
+    )
+    @action(detail=True, methods=["delete"], url_path="delete-project")
+    def delete_project(self, request, pk=None):
+        """
+        DELETE /api/v1/videos/{id}/delete-project/
+        """
+        try:
+            serializer = DeleteProjectSerializer(data={"project_id": pk})
+            serializer.is_valid(raise_exception=True)
+            success, message = serializer.execute()
+
+            if success:
+                return Response(
+                    {
+                        "status": "success",
+                        "message": message,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            else:
+                return Response(
+                    {
+                        "status": "error",
+                        "message": message,
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid project ID",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            logger.error(f"Error during project deletion: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while deleting the project",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
