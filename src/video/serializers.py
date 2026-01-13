@@ -763,27 +763,27 @@ class ActivityLogSerializer(serializers.Serializer):
         #     )
 
         # 3️⃣ Validate objects list
-        if "objects" not in value:
-            raise serializers.ValidationError("objects_data must contain key 'objects'.")
+        # if "objects" not in value:
+        #     raise serializers.ValidationError("objects_data must contain key 'objects'.")
 
-        objects_list = value["objects"]
+        # objects_list = value["objects"]
 
-        if not isinstance(objects_list, list):
-            raise serializers.ValidationError("'objects' must be a list.")
+        # if not isinstance(objects_list, list):
+        #     raise serializers.ValidationError("'objects' must be a list.")
 
-        # -------------------------------
-        # 3. Validate each object
-        # -------------------------------
-        for obj in objects_list:
-            if not isinstance(obj, dict):
-                raise serializers.ValidationError("Each object must be a dictionary.")
+        # # -------------------------------
+        # # 3. Validate each object
+        # # -------------------------------
+        # for obj in objects_list:
+        #     if not isinstance(obj, dict):
+        #         raise serializers.ValidationError("Each object must be a dictionary.")
 
-            for field in ["id", "start_frame", "end_frame"]:
-                if field not in obj:
-                    raise serializers.ValidationError(f"Object missing '{field}'")
+        #     for field in ["id", "start_frame", "end_frame"]:
+        #         if field not in obj:
+        #             raise serializers.ValidationError(f"Object missing '{field}'")
 
-                if not isinstance(obj[field], int):
-                    raise serializers.ValidationError(f"'{field}' must be integer.")
+        #         if not isinstance(obj[field], int):
+        #             raise serializers.ValidationError(f"'{field}' must be integer.")
 
         return value
 
@@ -807,17 +807,17 @@ class ActivityLogSerializer(serializers.Serializer):
             )
 
             # 3. Limit Undo Stack to 5 levels
-            applied_activities = ActivityLog.objects.filter(
-                project_id_id=project_id,
-                is_applied=True
-            ).order_by("-activity_id")
+            # applied_activities = ActivityLog.objects.filter(
+            #     project_id_id=project_id,
+            #     is_applied=True
+            # ).order_by("-activity_id")
 
-            if applied_activities.count() > 5:
-                ids_to_keep = applied_activities.values_list("activity_id", flat=True)[:5]
-                ActivityLog.objects.filter(
-                    project_id_id=project_id,
-                    is_applied=True
-                ).exclude(activity_id__in=ids_to_keep).delete()
+            # if applied_activities.count() > 5:
+            #     ids_to_keep = applied_activities.values_list("activity_id", flat=True)[:5]
+            #     ActivityLog.objects.filter(
+            #         project_id_id=project_id,
+            #         is_applied=True
+            #     ).exclude(activity_id__in=ids_to_keep).delete()
 
         return activity
 
