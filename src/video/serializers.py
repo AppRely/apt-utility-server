@@ -26,7 +26,9 @@ from .services.undo_redo_service import UndoRedoService
 from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
 from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
-
+from .services.project_deletion_service import ProjectDeletionService
+from .services.trk_export_service import TrkExportService
+from django.db.models import Exists, OuterRef
 
 class VideoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -84,6 +86,22 @@ class ProjectSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+class DeleteProjectSerializer(serializers.Serializer):
+    """
+    Serializer to validate project deletion request.
+    """
+    project_id = serializers.IntegerField(required=True)
+
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Project not found.")
+        return value
+
+    def execute(self):
+        return ProjectDeletionService.delete_project(
+            self.validated_data["project_id"]
+        )
 
 # # =============================
 # # FRAME SERIALIZERS
@@ -174,6 +192,7 @@ class FrameInfoSerializer(serializers.Serializer):
         )
 
 class ListUniqueIdsSerializer(serializers.Serializer):
+
     def validate(self, data):
         project_id = self.context.get("project_id")
 
@@ -188,17 +207,28 @@ class ListUniqueIdsSerializer(serializers.Serializer):
     def get_all_ids(self):
         project_id = self.context.get("project_id")
 
-        ids = (
-            ObjectTrack.objects.filter(project_id_id=project_id,object_status=1)
+        active_with_data = (
+            ObjectTrack.objects
+            .filter(
+                project_id_id=project_id,
+                object_status=1
+            )
+            .filter(
+                Exists(
+                    FrameObject.objects.filter(
+                        object_id=OuterRef("object_id"),
+                        frame__project_id_id=project_id
+                    )
+                )
+            )
             .order_by("object_id")
             .values_list("object_id", flat=True)
         )
 
         return {
             "project_id": project_id,
-            "unique_ids": list(ids),
+            "unique_ids": list(active_with_data),
         }
-
 
 class ObjectTrackDetailsSerializer(serializers.Serializer):
     object_id = serializers.IntegerField(required=True)
@@ -257,28 +287,44 @@ class ActivityLogSerializer(serializers.Serializer):
         if not isinstance(value, dict):
             raise serializers.ValidationError("objects_data must be a JSON object.")
 
-        # Validate objects list
+        m# # 2️⃣ Validate project_id inside objects_data
+        # if "project_id" not in value:
+        #     raise serializers.ValidationError(
+        #         "objects_data must contain 'project_id'."
+        #     )
+
+        # if not isinstance(value["project_id"], int):
+        #     raise serializers.ValidationError(
+        #         "'project_id' must be an integer."
+        #     )
+
+        # if not Project.objects.filter(project_id=value["project_id"]).exists():
+        #     raise serializers.ValidationError(
+        #         "Invalid project_id inside objects_data."
+        #     )
+
+        # 3️⃣ Validate objects list
         if "objects" not in value:
             raise serializers.ValidationError("objects_data must contain key 'objects'.")
 
-        objects_list = value["objects"]
+        # objects_list = value["objects"]
 
-        if not isinstance(objects_list, list):
-            raise serializers.ValidationError("'objects' must be a list.")
+        # if not isinstance(objects_list, list):
+        #     raise serializers.ValidationError("'objects' must be a list.")
 
-        # -------------------------------
-        # 3. Validate each object
-        # -------------------------------
-        for obj in objects_list:
-            if not isinstance(obj, dict):
-                raise serializers.ValidationError("Each object must be a dictionary.")
+        # # -------------------------------
+        # # 3. Validate each object
+        # # -------------------------------
+        # for obj in objects_list:
+        #     if not isinstance(obj, dict):
+        #         raise serializers.ValidationError("Each object must be a dictionary.")
 
-            for field in ["id", "start_frame", "end_frame"]:
-                if field not in obj:
-                    raise serializers.ValidationError(f"Object missing '{field}'")
+        #     for field in ["id", "start_frame", "end_frame"]:
+        #         if field not in obj:
+        #             raise serializers.ValidationError(f"Object missing '{field}'")
 
-                if not isinstance(obj[field], int):
-                    raise serializers.ValidationError(f"'{field}' must be integer.")
+        #         if not isinstance(obj[field], int):
+        #             raise serializers.ValidationError(f"'{field}' must be integer.")
 
         return value
 
@@ -302,17 +348,17 @@ class ActivityLogSerializer(serializers.Serializer):
             )
 
             # 3. Limit Undo Stack to 5 levels
-            applied_activities = ActivityLog.objects.filter(
-                project_id_id=project_id,
-                is_applied=True
-            ).order_by("-activity_id")
+            # applied_activities = ActivityLog.objects.filter(
+            #     project_id_id=project_id,
+            #     is_applied=True
+            # ).order_by("-activity_id")
 
-            if applied_activities.count() > 5:
-                ids_to_keep = applied_activities.values_list("activity_id", flat=True)[:5]
-                ActivityLog.objects.filter(
-                    project_id_id=project_id,
-                    is_applied=True
-                ).exclude(activity_id__in=ids_to_keep).delete()
+            # if applied_activities.count() > 5:
+            #     ids_to_keep = applied_activities.values_list("activity_id", flat=True)[:5]
+            #     ActivityLog.objects.filter(
+            #         project_id_id=project_id,
+            #         is_applied=True
+            #     ).exclude(activity_id__in=ids_to_keep).delete()
 
         return activity
 
@@ -1356,3 +1402,17 @@ class FrameObjectRangeNoFallbackSerializer(serializers.Serializer):
             "end_frame": data["end"],
             "objects": objects,
         }
+
+
+class TrkExportSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField(required=True)
+
+    def validate_project_id(self, value):
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError("Invalid project_id")
+        return value
+
+    def export(self):
+        return TrkExportService.export(
+            project_id=self.validated_data["project_id"]
+        )

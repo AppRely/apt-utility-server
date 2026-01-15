@@ -52,19 +52,19 @@ class SnapshotLogger:
                 after_state=after_state,
             )
 
-            # 3. Limit Undo Stack to 5 levels
-            # Get all applied activities for this project, ordered by ID descending
-            applied_activities = ActivityLog.objects.filter(
-                project_id_id=project_id,
-                is_applied=True
-            ).order_by("-activity_id")
+            # # 3. Limit Undo Stack to 5 levels
+            # # Get all applied activities for this project, ordered by ID descending
+            # applied_activities = ActivityLog.objects.filter(
+            #     project_id_id=project_id,
+            #     is_applied=True
+            # ).order_by("-activity_id")
 
-            if applied_activities.count() > 5:
-                # Keep the 5 most recent, delete the rest
-                ids_to_keep = applied_activities.values_list("activity_id", flat=True)[:5]
-                ActivityLog.objects.filter(
-                    project_id_id=project_id,
-                    is_applied=True
-                ).exclude(activity_id__in=ids_to_keep).delete()
+            # if applied_activities.count() > 5:
+            #     # Keep the 5 most recent, delete the rest
+            #     ids_to_keep = applied_activities.values_list("activity_id", flat=True)[:5]
+            #     ActivityLog.objects.filter(
+            #         project_id_id=project_id,
+            #         is_applied=True
+            #     ).exclude(activity_id__in=ids_to_keep).delete()
 
         return activity

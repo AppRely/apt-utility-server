@@ -38,6 +38,8 @@ from .serializers import (
     UndoSerializer,
     RedoSerializer,
     FrameObjectRangeNoFallbackSerializer,
+    TrkExportSerializer,
+    DeleteProjectSerializer
 )
 
 # Import Movie class from movies.py and Trk from TrkFile.py
@@ -1260,6 +1262,8 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "status": "success",
                     "data": compressed_data.hex(),
 					"compressed": True,
+                    "data": compressed_data.hex(),
+					"compressed": True,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -1280,6 +1284,129 @@ class VideoViewSet(viewsets.ModelViewSet):
                 {
                     "status": "error",
                     "message": "Something went wrong while fetching frame data",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Export updated TRK file (versioned).",
+        request_body=TrkExportSerializer,
+        responses={
+            200: "TRK export successful",
+            400: "Validation error",
+            500: "Export failed",
+        },
+    )
+    @action(detail=False, methods=["post"], url_path="export-trk")
+    def export_trk(self, request):
+        """
+        POST /api/v1/videos/export-trk/
+        """
+        try:
+            serializer = TrkExportSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            result = serializer.export()
+
+            download_url = request.build_absolute_uri(
+                f"/media/trk_exports/{result['project_id']}/"
+                f"project_{result['project_id']}_v{result['trk_version']}.trk"
+            )
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "TRK exported successfully",
+                    "data": {
+                        "project_id": result["project_id"],
+                        "trk_version": result["trk_version"],
+                        "download_url": download_url,
+                    },
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            logger.error("TRK export failed", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Failed to export TRK",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @swagger_auto_schema(
+        method="delete",
+        operation_description="Delete a project, its database records, and all associated local files (video, trk, exports).",
+        responses={
+            200: openapi.Response(
+                description="Project deleted successfully",
+                examples={"application/json": {"status": "success", "message": "Project deleted successfully"}}
+            ),
+            400: "Validation error",
+            404: "Project not found",
+            500: "Internal server error",
+        },
+    )
+    @action(detail=True, methods=["delete"], url_path="delete-project")
+    def delete_project(self, request, pk=None):
+        """
+        DELETE /api/v1/videos/{id}/delete-project/
+        """
+        try:
+            serializer = DeleteProjectSerializer(data={"project_id": pk})
+            serializer.is_valid(raise_exception=True)
+            success, message = serializer.execute()
+
+            if success:
+                return Response(
+                    {
+                        "status": "success",
+                        "message": message,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            else:
+                return Response(
+                    {
+                        "status": "error",
+                        "message": message,
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid project ID",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            logger.error(f"Error during project deletion: {str(e)}", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while deleting the project",
+                    "errors": str(e),
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
