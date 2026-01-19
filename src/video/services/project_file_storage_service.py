@@ -8,6 +8,29 @@ from django.conf import settings
 class ProjectFileStorageService:
 
     @staticmethod
+    def get_video_fps(video_path):
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "v:0",
+                    "-show_entries", "stream=r_frame_rate",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    video_path
+                ],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            fps_str = result.stdout.strip()
+            if "/" in fps_str:
+                num, den = map(int, fps_str.split("/"))
+                return int(num / den) if den else 30
+            return int(float(fps_str))
+        except Exception:
+            return 30
+        
+    @staticmethod
     def save(project_name, video_file, tracking_file):
         media_root = settings.MEDIA_ROOT
 
@@ -72,13 +95,20 @@ class ProjectFileStorageService:
                 # -crf 23: constant rate factor (quality)
                 # -preset medium: encoding speed/quality tradeoff
                 # -c:a aac: use aac audio codec
+                fps = ProjectFileStorageService.get_video_fps(video_path)
+                print(f"Using constant FPS for conversion: {fps}")
+
                 subprocess.run(
                     [
                         "ffmpeg", "-y", "-i", video_path,
+                        "-vf", f"fps={int(fps)}",
+                        "-vsync", "cfr",
                         "-c:v", "libx264",
                         "-pix_fmt", "yuv420p",
-                        "-preset", "fast",
-                        "-crf", "23",
+                        "-preset", "ultrafast",
+                        "-tune", "fastdecode",
+                        "-threads", "0",
+                        "-crf", "28",
                         "-movflags", "+faststart",
                         final_video_path
                     ],
