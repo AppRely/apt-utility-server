@@ -1,6 +1,7 @@
 import os
 import subprocess
 import json
+import uuid
 from django.conf import settings
 
 
@@ -16,9 +17,15 @@ class ProjectFileStorageService:
         os.makedirs(video_dir, exist_ok=True)
         os.makedirs(trk_dir, exist_ok=True)
 
-        original_video_name = video_file.name
-        video_path = os.path.join(video_dir, original_video_name)
-        trk_path = os.path.join(trk_dir, tracking_file.name)
+        unique_id = uuid.uuid4().hex[:8]
+
+        video_name_base, video_ext = os.path.splitext(video_file.name)
+        unique_video_name = f"{video_name_base}_{unique_id}{video_ext}"
+        video_path = os.path.join(video_dir, unique_video_name)
+
+        trk_name_base, trk_ext = os.path.splitext(tracking_file.name)
+        unique_trk_name = f"{trk_name_base}_{unique_id}{trk_ext}"
+        trk_path = os.path.join(trk_dir, unique_trk_name)
 
         # write video
         with open(video_path, "wb") as f:
@@ -52,8 +59,8 @@ class ProjectFileStorageService:
             except Exception:
                 return False
 
-        if not original_video_name.lower().endswith(".mp4") or not is_browser_compatible(video_path):
-            base_name = os.path.splitext(original_video_name)[0]
+        if not unique_video_name.lower().endswith(".mp4") or not is_browser_compatible(video_path):
+            base_name = os.path.splitext(unique_video_name)[0]
             final_video_name = f"{base_name}_converted.mp4"
             final_video_path = os.path.join(video_dir, final_video_name)
 
