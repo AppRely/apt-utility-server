@@ -19,11 +19,9 @@ from rest_framework import status
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import serializers
-# from .models import Video, Project, VideoData, ObjectTrack, ActivityLog
-from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog, Video 
+from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog
 from .serializers import (
     ProjectUploadSerializer, 
-    VideoSerializer, 
     FrameObjectRangeSerializer,
     FrameInfoSerializer,
     ProjectSerializer,
@@ -78,8 +76,6 @@ class VideoViewSet(viewsets.ModelViewSet):
     - Activity log (audit trail) management
     """
 
-    queryset = Video.objects.all()
-    serializer_class = VideoSerializer
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [AllowAny]
 

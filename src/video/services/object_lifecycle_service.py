@@ -43,10 +43,6 @@ class ObjectLifecycleService:
     @staticmethod
     def fetch(project_id: int, object_id: int, frame: int):
         try:
-            # obj = ObjectTrack.objects.get(
-            #     project_id_id=project_id,
-            #     object_id=object_id
-            # )
 
             obj = ObjectTrack.objects.filter(
                 project_id_id=project_id,
