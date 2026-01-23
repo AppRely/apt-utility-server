@@ -7,6 +7,13 @@
 - Full test coverage, continuous integration, and continuous deployment.
 - Celery tasks
 
+### For Automate setup
+
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
 ```bash
 cp .env.dist .env                                             # create .env file and fill-in DB info
 ```
