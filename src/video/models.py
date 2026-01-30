@@ -21,7 +21,7 @@ class Project(models.Model):
     height = models.IntegerField(null=True, blank=True)
     duration = models.FloatField(null=True, blank=True)
     total_frames = models.IntegerField(null=True, blank=True)
-
+    skeleton_points = models.JSONField(null=True, blank=True)
     # SIMPLE FIELD — default = inprogress-->project status
     project_status = models.CharField(max_length=50, default="inprogress")
 

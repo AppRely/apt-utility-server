@@ -78,6 +78,8 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [AllowAny]
+    queryset = Project.objects.none()
+    serializer_class = ProjectSerializer
 
     def _has_frame_data(self, video_id, frame_no):
         """Check if frame exists in VideoFrame."""

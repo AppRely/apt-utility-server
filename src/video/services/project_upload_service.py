@@ -8,6 +8,7 @@ from .video_frame_bulk_insert_service import VideoFrameBulkInsertService
 from .frame_object_bulk_insert_service import FrameObjectBulkInsertService
 from .object_track_bulk_insert_service import ObjectTrackBulkInsertService
 from .object_track_rebuild_service import ObjectTrackRebuildService
+from .trk_skeleton_service import TrkSkeletonService
 import os
 
 class ProjectUploadService:
@@ -23,6 +24,7 @@ class ProjectUploadService:
         trk = TrkValidationService.load_and_validate(trk_path)
 
         with transaction.atomic():
+            skeleton = TrkSkeletonService.extract(trk)
             project = Project.objects.create(
                 project_name=project_name,
                 video_name=os.path.basename(video_path),
@@ -37,6 +39,7 @@ class ProjectUploadService:
                 height=metadata.get('height'),
                 duration=metadata.get('duration'),
                 total_frames=metadata.get('total_frames'),
+                skeleton_points=skeleton,
             )
 
             # REMOVED INVALID video_id LOGIC

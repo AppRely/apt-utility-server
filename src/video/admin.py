@@ -25,6 +25,7 @@ class ProjectAdmin(BaseAdmin):
         "height",
         "duration",
         "total_frames",
+        "skeleton_points",
         "created_at",
         "updated_at",
     )
