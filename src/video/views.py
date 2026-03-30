@@ -43,6 +43,9 @@ from .serializers import (
 # Import Movie class from movies.py and Trk from TrkFile.py
 from .movies import Movie
 from .TrkFile import Trk
+from django.http import StreamingHttpResponse
+import time
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,8 @@ class VideoViewSet(viewsets.ModelViewSet):
     - Object operations (link, swap, break, delete)
     - Activity log (audit trail) management
     """
+    queryset = Project.objects.all()
+    serializer_class = ProjectSerializer
 
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [AllowAny]
@@ -1406,3 +1411,161 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        
+
+    @swagger_auto_schema(
+        operation_description="Stream video as MJPEG (frame-by-frame JPEG). For testing/debug only.",
+        manual_parameters=[
+            openapi.Parameter(
+                'frame',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description='Start frame number (default=0)',
+            ),
+            openapi.Parameter(
+                'fps',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description='Override FPS (default = original video FPS)',
+            ),
+            openapi.Parameter(
+                'width',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description='Resize width (optional)',
+            ),
+            openapi.Parameter(
+                'height',
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description='Resize height (optional)',
+            ),
+        ],
+        responses={
+            200: 'MJPEG stream',
+            404: 'Video not found',
+            500: 'Server error',
+        },
+    )
+
+    @action(detail=True, methods=['get'], url_path='mjpeg-stream')
+    def mjpeg_stream(self, request, pk=None):
+        try:
+            project = get_object_or_404(Project, pk=pk)
+
+            video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
+
+            if not project.video_name:
+                return Response(
+                    {"status": "error", "message": "Video filename missing"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            video_path = os.path.join(video_folder, project.video_name)
+
+            if not os.path.exists(video_path):
+                return Response(
+                    {"status": "error", "message": "Video not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            #  Step 1: Use OpenCV ONLY for metadata
+            cap = cv2.VideoCapture(video_path)
+
+            if not cap.isOpened():
+                return Response(
+                    {"status": "error", "message": "Unable to read video metadata"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            original_fps = cap.get(cv2.CAP_PROP_FPS) or 25
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+
+            print(f"FPS: {original_fps}, Width: {width}, Height: {height}")
+
+            #  Step 2: Allow override
+            fps = request.GET.get("fps") or original_fps
+
+            # Step 3: FFmpeg command (NO STORAGE)
+            command = [
+                "ffmpeg",
+                "-i", video_path,
+                "-vf", f"fps={fps}",
+                "-f", "image2pipe",
+                "-vcodec", "mjpeg",
+                "-"
+            ]
+
+            import time
+
+            def generate():
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    bufsize=10**8
+                )
+
+                buffer = b""
+                frame_count = 0
+                start_time = time.time()
+
+                while True:
+                    chunk = process.stdout.read(4096)
+                    if not chunk:
+                        break
+
+                    buffer += chunk
+
+                    while b'\xff\xd8' in buffer and b'\xff\xd9' in buffer:
+                        start = buffer.find(b'\xff\xd8')
+                        end = buffer.find(b'\xff\xd9') + 2
+
+                        frame = buffer[start:end]
+                        buffer = buffer[end:]
+
+                        frame_count += 1
+
+                        expected_time = frame_count / fps
+                        actual_time = time.time() - start_time
+
+                        delay = expected_time - actual_time
+
+                        print(
+                            f"Frame {frame_count} | "
+                            f"Expected: {expected_time:.3f} | "
+                            f"Actual: {actual_time:.3f} | "
+                            f"Delay: {delay:.3f}"
+                        )
+
+                        if delay > 0:
+                            time.sleep(delay)
+
+                        yield (
+                            b'--frame\r\n'
+                            b'Content-Type: image/jpeg\r\n\r\n' +
+                            frame +
+                            b'\r\n'
+                        )
+            return StreamingHttpResponse(
+                generate(),
+                content_type='multipart/x-mixed-replace; boundary=frame',
+            )
+
+        except Exception:
+            logger.error("Error in MJPEG stream", exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while MJPEG streaming",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        
+    ###########################################
