@@ -43,6 +43,7 @@ from .serializers import (
 # Import Movie class from movies.py and Trk from TrkFile.py
 from .movies import Movie
 from .TrkFile import Trk
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ class VideoViewSet(viewsets.ModelViewSet):
     - Object operations (link, swap, break, delete)
     - Activity log (audit trail) management
     """
+    queryset = Project.objects.all()
+    serializer_class = ProjectSerializer
 
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [AllowAny]
@@ -1235,6 +1238,9 @@ class VideoViewSet(viewsets.ModelViewSet):
             500: 'Server error'
             },
     )
+    #=====================================
+    #####################################
+    #=====================================
     @action(detail=True, methods=['get'], url_path='frame-object-range-no-fallback')
     def frame_object_range_no_fallback(self, request, pk=None):
         """
@@ -1250,16 +1256,40 @@ class VideoViewSet(viewsets.ModelViewSet):
 
             payload = serializer.get_data()
 
-            json_data = json.dumps(payload)
-            compressed_data = gzip.compress(json_data.encode('utf-8'))
+            # Safe ORJSON serialization
+            try:
+                json_data = orjson.dumps(
+                    payload,
+                    option=orjson.OPT_SERIALIZE_NUMPY
+                )
+            except Exception as ser_err:
+                logger.error(f"[ORJSON ERROR] {str(ser_err)}", exc_info=True)
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "Serialization failed",
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            # Compression
+            try:
+                compressed_data = gzip.compress(json_data)
+            except Exception as comp_err:
+                logger.error(f"[GZIP ERROR] {str(comp_err)}", exc_info=True)
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "Compression failed",
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
             return Response(
                 {
                     "status": "success",
                     "data": compressed_data.hex(),
-					"compressed": True,
-                    "data": compressed_data.hex(),
-					"compressed": True,
+                    "compressed": True,
                 },
                 status=status.HTTP_200_OK,
             )
@@ -1274,8 +1304,8 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        except Exception:
-            logger.error("Error fetching frame object range without fallback", exc_info=True)
+        except Exception as e:
+            logger.error(f"[UNEXPECTED ERROR] {str(e)}", exc_info=True)
             return Response(
                 {
                     "status": "error",
