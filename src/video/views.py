@@ -2,6 +2,7 @@ import gzip
 import logging
 import math
 import os
+from urllib import response
 
 import orjson
 from django.conf import settings
@@ -37,9 +38,15 @@ from .serializers import (
     UndoSerializer,
 )
 
+from wsgiref.util import FileWrapper
+from django.http import StreamingHttpResponse
+from rest_framework.decorators import action
+import mimetypes
 # Import Movie class from movies.py and Trk from TrkFile.py
 
 logger = logging.getLogger(__name__)
+
+CHUNK_SIZE = 64 * 1024  # 64KB optimal chunk size
 
 
 def replace_nan_with_none(obj):
@@ -84,6 +91,20 @@ class VideoViewSet(viewsets.ModelViewSet):
         """Return nearest previous valid frame, else None."""
         row = VideoFrame.objects.filter(project_id=video_id, frame_no__lt=frame_no).order_by("-frame_no").first()
         return row.frame_no if row else None
+    
+    def _file_iterator(self, file_obj, start, length):
+        file_obj.seek(start)
+        remaining = length
+
+        try:
+            while remaining > 0:
+                chunk = file_obj.read(min(CHUNK_SIZE, remaining))
+                if not chunk:
+                    break
+                yield chunk
+                remaining -= len(chunk)
+        finally:
+            file_obj.close()  # ensures file is closed
 
     def _stream_video_with_range(self, file_path, range_header):
         """
@@ -97,10 +118,19 @@ class VideoViewSet(viewsets.ModelViewSet):
             end = int(range_values[1]) if len(range_values) > 1 and range_values[1] else file_size - 1
             end = min(end, file_size - 1)
             length = end - start + 1
-            with open(file_path, "rb") as f:
-                f.seek(start)
-                data = f.read(length)
-            response = HttpResponse(data, status=206, content_type="video/mp4")
+
+            file_obj = open(file_path, "rb")
+            # file_obj.seek(start)
+            content_type, _ = mimetypes.guess_type(file_path)
+            content_type = content_type or "video/mp4"
+
+            response = StreamingHttpResponse(
+                self._file_iterator(file_obj, start, length),
+                status=206,
+                content_type=content_type,
+            )
+
+            # Required headers (DO NOT CHANGE – browser depends on these)
             response["Content-Range"] = f"bytes {start}-{end}/{file_size}"
             response["Accept-Ranges"] = "bytes"
             response["Content-Length"] = str(length)
@@ -109,6 +139,25 @@ class VideoViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error("Error processing Range request: %s", str(e), exc_info=True)
             raise
+
+    def _stream_full_video(self, file_path):
+        """
+        Optimized full video streaming (no memory load)
+        """
+        file_size = os.path.getsize(file_path)
+        file_obj = open(file_path, "rb")
+        content_type, _ = mimetypes.guess_type(file_path)
+        content_type = content_type or "video/mp4"
+        response = StreamingHttpResponse(
+            self._file_iterator(file_obj, 0, file_size),
+            content_type=content_type,
+        )
+
+        response["Content-Length"] = str(file_size)
+        response["Accept-Ranges"] = "bytes"
+        response["Cache-Control"] = "public, max-age=3600"
+        # response["Connection"] = "keep-alive"   # ADD HERE
+        return response
 
     @swagger_auto_schema(
         operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
@@ -456,11 +505,8 @@ class VideoViewSet(viewsets.ModelViewSet):
             if range_header:
                 return self._stream_video_with_range(file_path, range_header)
 
-            response = FileResponse(open(file_path, "rb"), content_type="video/mp4")
-            response["Content-Length"] = str(os.path.getsize(file_path))
-            response["Accept-Ranges"] = "bytes"
-            response["Cache-Control"] = "public, max-age=3600"
-            return response
+            # Normal request
+            return self._stream_full_video(file_path)
 
         except Exception:
             logger.error("Error streaming video file", exc_info=True)
