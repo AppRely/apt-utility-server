@@ -1,10 +1,7 @@
-from django.db import transaction
-from ..models import ActivityLog, OperationSnapshot
 # class SnapshotLogger:
 #     """
 #     WRITE-ONLY snapshot logger.
 #     """
-
 #     @staticmethod
 #     def log(project_id, operation, before_state, after_state, objects_data=None):
 #         activity = ActivityLog.objects.create(
@@ -13,30 +10,29 @@ from ..models import ActivityLog, OperationSnapshot
 #             objects_data=objects_data or {},
 #             is_applied=True,
 #         )
-
 #         OperationSnapshot.objects.create(
 #             activity=activity,
 #             before_state=before_state,
 #             after_state=after_state,
 #         )
-
 #         return activity
-
 import json
+
+from django.db import transaction
+
+from ..models import ActivityLog, OperationSnapshot
+
 
 class SnapshotLogger:
     @staticmethod
     def log(project_id, operation, before_state, after_state, objects_data=None):
         objects_data = json.loads(json.dumps(objects_data or {}))
         before_state = json.loads(json.dumps(before_state))
-        after_state  = json.loads(json.dumps(after_state))
+        after_state = json.loads(json.dumps(after_state))
 
         with transaction.atomic():
             # 1. Clear Redo Stack (any unapplied activities for this project)
-            ActivityLog.objects.filter(
-                project_id_id=project_id, 
-                is_applied=False
-            ).delete()
+            ActivityLog.objects.filter(project_id_id=project_id, is_applied=False).delete()
 
             # 2. Create new activity
             activity = ActivityLog.objects.create(

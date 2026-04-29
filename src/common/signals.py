@@ -1,8 +1,9 @@
 from collections import defaultdict
+
 from django.db.models import signals
 
 
-class DisableSignals(object):
+class DisableSignals:
     """
     A class used to disable signals on the enclosed block of code.
     Usage:

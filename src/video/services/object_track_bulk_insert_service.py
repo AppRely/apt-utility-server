@@ -1,11 +1,11 @@
 # src/video/services/object_track_bulk_insert_service.py
 
 import numpy as np
+
 from ..models import ObjectTrack
 
 
 class ObjectTrackBulkInsertService:
-
     @staticmethod
     def insert(*, project_id, trk):
         starts = np.array(trk.startframes).flatten()

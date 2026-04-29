@@ -1,9 +1,9 @@
-from rest_framework import viewsets, mixins
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework import mixins, viewsets
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 
-from .serializers import FileSerializer
 from .models import File
+from .serializers import FileSerializer
 
 
 class FilesViewset(mixins.CreateModelMixin, viewsets.GenericViewSet):
@@ -14,7 +14,7 @@ class FilesViewset(mixins.CreateModelMixin, viewsets.GenericViewSet):
     parser_classes = (MultiPartParser, FormParser)
     queryset = File.objects.all()
     serializer_class = FileSerializer
-    permissions = {'default': (IsAuthenticated,)}
+    permissions = {"default": (IsAuthenticated,)}
 
     def create(self, request, *args, **kwargs):
         """

@@ -18,16 +18,14 @@ class SnapshotBuilder:
         if isinstance(data, list):
             return data
 
-        raise TypeError(
-            f"SnapshotBuilder.capture expects QuerySet or list, got {type(data)}"
-        )
+        raise TypeError(f"SnapshotBuilder.capture expects QuerySet or list, got {type(data)}")
 
     @staticmethod
     def _get_pk(row: dict):
         """
         Dynamically find primary key field.
         """
-        for key in row.keys():
+        for key in row:
             if key.endswith("_id") or key == "id":
                 return key
         raise KeyError("No primary key found in snapshot row")
@@ -39,12 +37,8 @@ class SnapshotBuilder:
         model_names = set(before_qs_map.keys()) | set(after_qs_map.keys())
 
         for model_name in model_names:
-            before_rows = SnapshotBuilder.capture(
-                before_qs_map.get(model_name)
-            )
-            after_rows = SnapshotBuilder.capture(
-                after_qs_map.get(model_name)
-            )
+            before_rows = SnapshotBuilder.capture(before_qs_map.get(model_name))
+            after_rows = SnapshotBuilder.capture(after_qs_map.get(model_name))
 
             if before_rows:
                 pk_field = SnapshotBuilder._get_pk(before_rows[0])

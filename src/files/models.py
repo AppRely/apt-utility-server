@@ -11,7 +11,7 @@ class File(models.Model):
 
     file = models.FileField(blank=False, null=False)
     thumbnail = models.ImageField(blank=True, null=True)
-    author = models.ForeignKey('users.User', related_name='files', on_delete=models.DO_NOTHING)
+    author = models.ForeignKey("users.User", related_name="files", on_delete=models.DO_NOTHING)
     created_at = models.DateTimeField(auto_now_add=True)
 
 
@@ -30,10 +30,10 @@ def generate_thumbnail(sender, instance=None, created=False, **kwargs):
     if created is False:
         return
 
-    thumbnailer = get_thumbnailer(instance.file.name, relative_name='thumbnail')
+    thumbnailer = get_thumbnailer(instance.file.name, relative_name="thumbnail")
     try:
-        thumbnail = thumbnailer.get_thumbnail({'size': File.THUMBNAIL_SIZE}, save=False)
+        thumbnail = thumbnailer.get_thumbnail({"size": File.THUMBNAIL_SIZE}, save=False)
     except (UnidentifiedImageError, EasyThumbnailsError):
         return
     else:
-        instance.thumbnail.save(name=f'small_{instance.file.name}', content=thumbnail)
+        instance.thumbnail.save(name=f"small_{instance.file.name}", content=thumbnail)

@@ -1,5 +1,4 @@
-from django.core.exceptions import ValidationError
-from ..models import ObjectTrack, FrameObject 
+from ..models import FrameObject, ObjectTrack
 
 
 class ObjectLifecycleService:
@@ -9,11 +8,7 @@ class ObjectLifecycleService:
 
     @staticmethod
     def get_active_object(project_id: int, object_id: int) -> ObjectTrack:
-        return ObjectTrack.objects.get(
-            project_id_id=project_id,
-            object_id=object_id,
-            object_status=1
-        )
+        return ObjectTrack.objects.get(project_id_id=project_id, object_id=object_id, object_status=1)
 
     @staticmethod
     def deactivate_object(obj_track: ObjectTrack, note: str):
@@ -43,7 +38,6 @@ class ObjectLifecycleService:
     @staticmethod
     def fetch(project_id: int, object_id: int, frame: int):
         try:
-
             obj = ObjectTrack.objects.filter(
                 project_id_id=project_id,
                 object_id=object_id,

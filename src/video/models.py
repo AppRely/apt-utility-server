@@ -1,5 +1,6 @@
 from django.db import models
 
+
 class Project(models.Model):
     project_id = models.AutoField(primary_key=True)
 
@@ -35,6 +36,7 @@ class Project(models.Model):
     def __str__(self):
         return self.project_name
 
+
 class VideoFrame(models.Model):
     id = models.AutoField(primary_key=True)
 
@@ -65,7 +67,8 @@ class FrameObject(models.Model):
     confidence = models.JSONField(null=True, blank=True)
     tag = models.JSONField(null=True, blank=True)
     timestamp = models.JSONField(null=True, blank=True)
-    is_active = models.BooleanField(default=True) #for soft delete
+    is_active = models.BooleanField(default=True)  # for soft delete
+
     class Meta:
         db_table = "frame_object"
         indexes = [
@@ -75,6 +78,7 @@ class FrameObject(models.Model):
 
     def __str__(self):
         return f"Frame {self.frame_id} | Object {self.object_id}"
+
 
 class ObjectTrack(models.Model):
     track_id = models.AutoField(primary_key=True)
@@ -96,22 +100,23 @@ class ObjectTrack(models.Model):
             models.Index(fields=["project_id", "object_id"]),
             models.Index(fields=["project_id", "object_status"]),
         ]
-        
+
     def __str__(self):
         return f"Object {self.object_id} | Project {self.project_id_id}"
-    
+
+
 class ActivityLog(models.Model):
     activity_id = models.AutoField(primary_key=True)
 
-    project_id = models.ForeignKey(Project, on_delete=models.CASCADE )
-    objects_data = models.JSONField()  
+    project_id = models.ForeignKey(Project, on_delete=models.CASCADE)
+    objects_data = models.JSONField()
     operation = models.CharField(max_length=255)
     activity_created_at = models.DateTimeField(auto_now_add=True)
     activity_updated_at = models.DateTimeField(auto_now=True)
-    
+
     #  REQUIRED FOR UNDO / REDO
     is_applied = models.BooleanField(default=True)
-    
+
     class Meta:
         db_table = "activity_log"
         indexes = [
@@ -131,4 +136,3 @@ class OperationSnapshot(models.Model):
 
     class Meta:
         db_table = "operation_snapshot"
-
