@@ -1,16 +1,12 @@
-from django.contrib import admin
-from django.contrib.auth.admin import GroupAdmin
-from django.contrib.auth.models import Group
 from unfold.admin import ModelAdmin as UnfoldModelAdmin
-from unfold.widgets import UnfoldAdminSelectWidget, UnfoldAdminTextInputWidget
 
 
 class BaseAdmin(UnfoldModelAdmin):
     """Custom admin to set created_by and updated_by."""
 
     readonly_fields = (
-        'created_at',
-        'updated_at',
+        "created_at",
+        "updated_at",
     )
     actions = None
 
@@ -21,7 +17,7 @@ class BaseAdmin(UnfoldModelAdmin):
     def get_queryset(self, request):
         # Use all_objects if the model defines it (for soft delete support)
         qs = super().get_queryset(request)
-        if hasattr(self.model, 'all_objects'):
+        if hasattr(self.model, "all_objects"):
             return self.model.all_objects.all()
         return qs
 

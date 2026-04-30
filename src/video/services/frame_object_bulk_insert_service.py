@@ -2,11 +2,11 @@
 
 
 import numpy as np
-from ..models import VideoFrame, FrameObject
+
+from ..models import FrameObject, VideoFrame
 
 
 class FrameObjectBulkInsertService:
-
     BULK_SIZE = 5000
 
     @classmethod
@@ -17,17 +17,11 @@ class FrameObjectBulkInsertService:
         # ---------------------------------------------------------
         # 1. Cache VideoFrame IDs once
         # ---------------------------------------------------------
-        frame_id_map = dict(
-            VideoFrame.objects
-            .filter(project_id_id=project_id)
-            .values_list("frame_no", "id")
-        )
+        frame_id_map = dict(VideoFrame.objects.filter(project_id_id=project_id).values_list("frame_no", "id"))
 
         # TRK object IDs (may be missing or shorter than targets)
         trk_object_ids = (
-            np.asarray(trk.pTrkiTgt).flatten()
-            if hasattr(trk, "pTrkiTgt") and trk.pTrkiTgt is not None
-            else None
+            np.asarray(trk.pTrkiTgt).flatten() if hasattr(trk, "pTrkiTgt") and trk.pTrkiTgt is not None else None
         )
 
         start = int(trk.T0)
@@ -47,8 +41,8 @@ class FrameObjectBulkInsertService:
                 continue
 
             conf_arr = trk.pTrkConf.getframe(frame_no) if getattr(trk, "pTrkConf", None) else None
-            tag_arr  = trk.pTrkTag.getframe(frame_no)  if getattr(trk, "pTrkTag", None) else None
-            ts_arr   = trk.pTrkTS.getframe(frame_no)   if getattr(trk, "pTrkTS", None) else None
+            tag_arr = trk.pTrkTag.getframe(frame_no) if getattr(trk, "pTrkTag", None) else None
+            ts_arr = trk.pTrkTS.getframe(frame_no) if getattr(trk, "pTrkTS", None) else None
 
             arr = np.asarray(frame_arr)
 
@@ -91,16 +85,17 @@ class FrameObjectBulkInsertService:
                 else:
                     coords = [
                         [
-                            None if (
+                            None
+                            if (
                                 x is None
                                 or (isinstance(x, float) and np.isnan(x))
                                 or (isinstance(x, float) and np.isinf(x))
-                            ) else x
+                            )
+                            else x
                             for x in row
                         ]
                         for row in coords
                     ]
-
 
                 bulk.append(
                     FrameObject(

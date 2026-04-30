@@ -1,6 +1,6 @@
 # services/frame_info_service.py
 
-from ..models import VideoFrame, FrameObject, ObjectTrack
+from ..models import FrameObject, ObjectTrack, VideoFrame
 
 
 class FrameInfoService:
@@ -11,21 +11,12 @@ class FrameInfoService:
         Uses nearest previous frame as fallback.
         """
 
-
-        frame = (
-            VideoFrame.objects
-            .filter(project_id_id=video_id, frame_no__lte=frame_no)
-            .order_by("-frame_no")
-            .first()
-        )
+        frame = VideoFrame.objects.filter(project_id_id=video_id, frame_no__lte=frame_no).order_by("-frame_no").first()
 
         if not frame:
             raise VideoFrame.DoesNotExist("No valid frame found")
 
-
-        frame_objects = list(
-            FrameObject.objects.filter(frame=frame, is_active=True)
-        )
+        frame_objects = list(FrameObject.objects.filter(frame=frame, is_active=True))
 
         if not frame_objects:
             return {
@@ -33,7 +24,6 @@ class FrameInfoService:
                 "frame_number": frame.frame_no,
                 "objects": [],
             }
-
 
         object_ids = {obj.object_id for obj in frame_objects}
 
@@ -46,20 +36,21 @@ class FrameInfoService:
             )
         }
 
-
         objects = []
         for obj in frame_objects:
             track = tracks.get(obj.object_id)
 
-            objects.append({
-                "object_id": obj.object_id,
-                "coordinates": obj.coordinates,
-                "confidence": obj.confidence,
-                # "tag": obj.tag,
-                # "timestamp": obj.timestamp,
-                "start_frame": track.start_frame if track else None,
-                "end_frame": track.end_frame if track else None,
-            })
+            objects.append(
+                {
+                    "object_id": obj.object_id,
+                    "coordinates": obj.coordinates,
+                    "confidence": obj.confidence,
+                    # "tag": obj.tag,
+                    # "timestamp": obj.timestamp,
+                    "start_frame": track.start_frame if track else None,
+                    "end_frame": track.end_frame if track else None,
+                }
+            )
 
         return {
             "video_id": video_id,

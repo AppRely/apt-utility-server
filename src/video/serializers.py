@@ -1,37 +1,25 @@
-import math
-import os
-import re
 import json
 
-import numpy as np
-from django.conf import settings
 from django.db import transaction
-from django.core.files.uploadedfile import UploadedFile
+from django.db.models import Exists, Max, OuterRef, Q
 from rest_framework import serializers
-from django.db.models import Max
 
-from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog
-from .TrkFile import Trk
-from django.db import transaction
-from django.db.models import Case, When, Value, IntegerField
-from rest_framework import serializers
-from django.db.models import Q
-from .services.object_lifecycle_service import ObjectLifecycleService
+from .models import ActivityLog, FrameObject, ObjectTrack, Project
+from .services.frame_info_service import FrameInfoService
+from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
 from .services.frame_object_range_service import FrameObjectRangeService
-from .services.frame_info_service import FrameInfoService 
+from .services.object_lifecycle_service import ObjectLifecycleService
+from .services.project_deletion_service import ProjectDeletionService
 from .services.project_upload_service import ProjectUploadService
-from .services.undo_redo_service import UndoRedoService
 from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
-from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
-from .services.project_deletion_service import ProjectDeletionService
 from .services.trk_export_service import TrkExportService
-from django.db.models import Exists, OuterRef
-
+from .services.undo_redo_service import UndoRedoService
 
 # =============================
 # PROJECT SERIALIZERS
 # =============================
+
 
 class ProjectUploadSerializer(serializers.Serializer):
     """
@@ -61,13 +49,14 @@ class ProjectSerializer(serializers.ModelSerializer):
     """
     Serializer for listing projects with essential fields.
     """
+
     class Meta:
         model = Project
         fields = [
             "project_id",
             "project_name",
             "video_name",
-            "video_path", 
+            "video_path",
             "trk_file_name",
             "trk_file_path",
             "project_status",
@@ -80,10 +69,12 @@ class ProjectSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+
 class DeleteProjectSerializer(serializers.Serializer):
     """
     Serializer to validate project deletion request.
     """
+
     project_id = serializers.IntegerField(required=True)
 
     def validate_project_id(self, value):
@@ -92,31 +83,32 @@ class DeleteProjectSerializer(serializers.Serializer):
         return value
 
     def execute(self):
-        return ProjectDeletionService.delete_project(
-            self.validated_data["project_id"]
-        )
+        return ProjectDeletionService.delete_project(self.validated_data["project_id"])
+
 
 # # =============================
 # # FRAME SERIALIZERS
 # # =============================
 
+
 class FrameObjectRangeSerializer(serializers.Serializer):
     """
     Serializer to handle fetching object data for a range of frames.
     """
+
     start = serializers.IntegerField(required=True, help_text="Start frame id (inclusive)")
     end = serializers.IntegerField(required=True, help_text="End frame id (inclusive, max span 150)")
     video_id = serializers.IntegerField(required=True, help_text="Video ID (passed from view)")
 
     def validate(self, attrs):
-        start = attrs.get('start')
-        end = attrs.get('end')
-        video_id = attrs.get('video_id')
+        start = attrs.get("start")
+        end = attrs.get("end")
+        video_id = attrs.get("video_id")
 
         # Validate that frame numbers are non-negative
         if start < 0 or end < 0:
             raise serializers.ValidationError({"start": "Start frame number must be non-negative"})
-        
+
         # Validate start <= end
         if start > end:
             raise serializers.ValidationError({"start": "start must be <= end"})
@@ -125,21 +117,19 @@ class FrameObjectRangeSerializer(serializers.Serializer):
         if end - start + 1 > 900:
             raise serializers.ValidationError({"end": "range cannot exceed 900 frames"})
 
-        
         if not Project.objects.filter(project_id=video_id).exists():
             raise serializers.ValidationError({"video_id": "Invalid video_id"})
 
         return attrs
 
     def get_data(self):
-
         data = self.validated_data
 
         objects = FrameObjectRangeService.fetch(
             project_id=data["video_id"],
             start_frame=data["start"],
             end_frame=data["end"],
-            extra_frames=getattr(self, "extra_frames", None)
+            extra_frames=getattr(self, "extra_frames", None),
         )
 
         return {
@@ -155,12 +145,13 @@ class FrameInfoSerializer(serializers.Serializer):
     Serializer to handle fetching frame information by video ID and frame number.
     Returns all tracking data for the specified frame.
     """
+
     video = serializers.IntegerField(required=True, help_text="Video ID")
     frame = serializers.IntegerField(required=True, help_text="Frame number")
 
     def validate(self, attrs):
-        video_id = attrs.get('video')
-        frame_num = attrs.get('frame')
+        video_id = attrs.get("video")
+        frame_num = attrs.get("frame")
 
         # Validate that frame number is non-negative
         if frame_num < 0:
@@ -184,8 +175,8 @@ class FrameInfoSerializer(serializers.Serializer):
             frame_no=data["frame"],
         )
 
-class ListUniqueIdsSerializer(serializers.Serializer):
 
+class ListUniqueIdsSerializer(serializers.Serializer):
     def validate(self, data):
         project_id = self.context.get("project_id")
 
@@ -201,18 +192,9 @@ class ListUniqueIdsSerializer(serializers.Serializer):
         project_id = self.context.get("project_id")
 
         active_with_data = (
-            ObjectTrack.objects
+            ObjectTrack.objects.filter(project_id_id=project_id, object_status=1)
             .filter(
-                project_id_id=project_id,
-                object_status=1
-            )
-            .filter(
-                Exists(
-                    FrameObject.objects.filter(
-                        object_id=OuterRef("object_id"),
-                        frame__project_id_id=project_id
-                    )
-                )
+                Exists(FrameObject.objects.filter(object_id=OuterRef("object_id"), frame__project_id_id=project_id))
             )
             .order_by("object_id")
             .values_list("object_id", flat=True)
@@ -222,6 +204,7 @@ class ListUniqueIdsSerializer(serializers.Serializer):
             "project_id": project_id,
             "unique_ids": list(active_with_data),
         }
+
 
 class ObjectTrackDetailsSerializer(serializers.Serializer):
     object_id = serializers.IntegerField(required=True)
@@ -240,7 +223,6 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
         if frame < 0:
             raise serializers.ValidationError({"frame": "Frame must be >= 0"})
 
-
         return data
 
     def get_object_data(self):
@@ -250,11 +232,11 @@ class ObjectTrackDetailsSerializer(serializers.Serializer):
             frame=self.validated_data["frame"],
         )
 
+
 # # =============================
 # # ACTIVITY SERIALIZERS
 # # =============================
 class ActivityLogSerializer(serializers.Serializer):
-
     project_id = serializers.IntegerField(required=True)
     objects_data = serializers.JSONField(required=True)
     operation = serializers.CharField(max_length=255, required=True)
@@ -280,7 +262,7 @@ class ActivityLogSerializer(serializers.Serializer):
         if not isinstance(value, dict):
             raise serializers.ValidationError("objects_data must be a JSON object.")
 
-        m# # 2️⃣ Validate project_id inside objects_data
+        m  # # 2️⃣ Validate project_id inside objects_data
         # if "project_id" not in value:
         #     raise serializers.ValidationError(
         #         "objects_data must contain 'project_id'."
@@ -321,16 +303,12 @@ class ActivityLogSerializer(serializers.Serializer):
 
         return value
 
-
     def create(self, validated_data):
         project_id = validated_data["project_id"]
 
         with transaction.atomic():
             # 1. Clear Redo Stack
-            ActivityLog.objects.filter(
-                project_id_id=project_id, 
-                is_applied=False
-            ).delete()
+            ActivityLog.objects.filter(project_id_id=project_id, is_applied=False).delete()
 
             # 2. Create activity
             activity = ActivityLog.objects.create(
@@ -360,10 +338,11 @@ class ActivityLogRequestSerializer(serializers.Serializer):
     """
     Serializer to validate video ID and fetch all Activity Logs based on video_id.
     """
+
     video_id = serializers.IntegerField(required=True, help_text="Video ID")
 
     def validate(self, attrs):
-        video_id = attrs.get('video_id')
+        video_id = attrs.get("video_id")
 
         # Video ID must exist in Project table
         if not Project.objects.filter(project_id=video_id).exists():
@@ -375,20 +354,20 @@ class ActivityLogRequestSerializer(serializers.Serializer):
         """
         Fetch all activity logs for the given video_id and return summary counts.
         """
-        video_id = self.validated_data['video_id']
+        video_id = self.validated_data["video_id"]
 
-#         # # 1. Get all projects linked to this video
-#         # project_ids = list(
-#         #     Project.objects.filter(video_id=video_id)
-#         #                    .values_list('project_id', flat=True)
-#         # )
+        #         # # 1. Get all projects linked to this video
+        #         # project_ids = list(
+        #         #     Project.objects.filter(video_id=video_id)
+        #         #                    .values_list('project_id', flat=True)
+        #         # )
 
-#         # # 2. Fetch activity logs for these projects
-#         # logs = ActivityLog.objects.filter(project_id__in=project_ids)
+        #         # # 2. Fetch activity logs for these projects
+        #         # logs = ActivityLog.objects.filter(project_id__in=project_ids)
 
         # Fetch ALL logs for the project (both applied and unapplied) to calculate counts
         all_logs = ActivityLog.objects.filter(project_id_id=video_id).order_by("-activity_updated_at")
-        
+
         total_length = all_logs.count()
         total_undo_can_perform = all_logs.filter(is_applied=True).count()
         total_redo_can_perform = all_logs.filter(is_applied=False).count()
@@ -396,27 +375,29 @@ class ActivityLogRequestSerializer(serializers.Serializer):
         # 3. Structure the response
         logs_data = []
         for log in all_logs.filter(is_applied=True):
-            logs_data.append({
-                "activity_id": log.activity_id,
-                "project_id": log.project_id_id,
-                "objects_data": log.objects_data,
-                "operation": log.operation,
-                "activity_updated_at": log.activity_updated_at,
-            })
+            logs_data.append(
+                {
+                    "activity_id": log.activity_id,
+                    "project_id": log.project_id_id,
+                    "objects_data": log.objects_data,
+                    "operation": log.operation,
+                    "activity_updated_at": log.activity_updated_at,
+                }
+            )
 
         return {
             "video_id": video_id,
             "total_length": total_length,
             "total_undo_can_perform": total_undo_can_perform,
             "total_redo_can_perform": total_redo_can_perform,
-            "logs": logs_data
+            "logs": logs_data,
         }
-
 
 
 # =============================
 # OBJECT OPERATION SERIALIZERS
 # =============================
+
 
 class LinkObjectSerializer(serializers.Serializer):
     object_1_id = serializers.IntegerField(required=True)
@@ -426,7 +407,6 @@ class LinkObjectSerializer(serializers.Serializer):
     object_2_id = serializers.IntegerField(required=True)
     object_2_start = serializers.IntegerField(required=True)
     object_2_end = serializers.IntegerField(required=True)
-
 
     def validate(self, data):
         # Use 'project_id' as context key for consistency
@@ -446,32 +426,18 @@ class LinkObjectSerializer(serializers.Serializer):
         if data["object_1_id"] == data["object_2_id"]:
             raise serializers.ValidationError("Object IDs cannot be the same.")
 
-        if not ObjectTrack.objects.filter(
-            project_id_id=project_id,
-            object_id=data["object_1_id"]
-        ).exists():
+        if not ObjectTrack.objects.filter(project_id_id=project_id, object_id=data["object_1_id"]).exists():
             raise serializers.ValidationError({"object_1_id": "Object 1 not found"})
 
-        if not ObjectTrack.objects.filter(
-            project_id_id=project_id,
-            object_id=data["object_2_id"]
-        ).exists():
+        if not ObjectTrack.objects.filter(project_id_id=project_id, object_id=data["object_2_id"]).exists():
             raise serializers.ValidationError({"object_2_id": "Object 2 not found"})
 
         # Fetch obj2_track for lifecycle validation
-        obj2_track = ObjectTrack.objects.get(
-            project_id_id=project_id,
-            object_id=data["object_2_id"]
-        )
-        if data["object_2_start"] < obj2_track.start_frame or \
-            data["object_2_end"] > obj2_track.end_frame:
-                raise serializers.ValidationError(
-                    {"object_2_range": "Range outside object_2"}
-        ) 
-
+        obj2_track = ObjectTrack.objects.get(project_id_id=project_id, object_id=data["object_2_id"])
+        if data["object_2_start"] < obj2_track.start_frame or data["object_2_end"] > obj2_track.end_frame:
+            raise serializers.ValidationError({"object_2_range": "Range outside object_2"})
 
         return data
-
 
     def merge_data(self):
         """
@@ -487,17 +453,10 @@ class LinkObjectSerializer(serializers.Serializer):
         start2 = data["object_2_start"]
         end2 = data["object_2_end"]
 
-
         # fetch lifecycle rows
-        obj1_row = ObjectTrack.objects.get(
-            project_id_id=project_id,
-            object_id=obj1
-        )
+        obj1_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj1)
 
-        obj2_row = ObjectTrack.objects.get(
-            project_id_id=project_id,
-            object_id=obj2
-        )
+        obj2_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj2)
 
         with transaction.atomic():
             # update_map = {
@@ -525,7 +484,7 @@ class LinkObjectSerializer(serializers.Serializer):
             #     new_object_id=obj1,
             # )
 
-            #rows_updated = qs.update(**update_map)
+            # rows_updated = qs.update(**update_map)
 
             # -------------------------------------------------
             #  Replace object_2 → object_1 in frames
@@ -542,11 +501,9 @@ class LinkObjectSerializer(serializers.Serializer):
                         frame__frame_no__lte=end2,
                         object_id=obj2,
                     ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
-                        track_id__in=[obj1_row.track_id, obj2_row.track_id]
-                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_row.track_id, obj2_row.track_id]),
                 },
-                after_qs_map={}, # Empty after_qs_map puts everything in 'deleted'
+                after_qs_map={},  # Empty after_qs_map puts everything in 'deleted'
             )
 
             # =====================================================
@@ -559,9 +516,7 @@ class LinkObjectSerializer(serializers.Serializer):
                 frame__frame_no__lte=end2,
             ).update(object_id=obj1)
             if rows_updated == 0:
-                raise serializers.ValidationError(
-                    "No frames found for object_2 in given range"
-                )
+                raise serializers.ValidationError("No frames found for object_2 in given range")
 
             # Extend object_1 lifecycle
             obj1_row.start_frame = min(obj1_row.start_frame, obj2_row.start_frame)
@@ -569,24 +524,23 @@ class LinkObjectSerializer(serializers.Serializer):
             obj1_row.object_status = 1
             obj1_row.operation_note = "link_target"
 
-            obj1_row.save(update_fields=[
-                "start_frame",
-                "end_frame",
-                "object_status",
-                "operation_note",
-            ])
+            obj1_row.save(
+                update_fields=[
+                    "start_frame",
+                    "end_frame",
+                    "object_status",
+                    "operation_note",
+                ]
+            )
 
             # Deactivate object_2
-            ObjectLifecycleService.deactivate_object(
-                obj2_row,
-                note=f"linked_into_object_{obj1}"
-            )
+            ObjectLifecycleService.deactivate_object(obj2_row, note=f"linked_into_object_{obj1}")
 
             # =====================================================
             # SNAPSHOT — AFTER (Capture merged state)
             # =====================================================
             after_state = SnapshotBuilder.build(
-                before_qs_map={}, # Empty before_qs_map puts everything in 'created'
+                before_qs_map={},  # Empty before_qs_map puts everything in 'created'
                 after_qs_map={
                     "FrameObject": FrameObject.objects.filter(
                         frame__project_id_id=project_id,
@@ -594,9 +548,7 @@ class LinkObjectSerializer(serializers.Serializer):
                         frame__frame_no__lte=end2,
                         object_id=obj1,
                     ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
-                        track_id__in=[obj1_row.track_id, obj2_row.track_id]
-                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_row.track_id, obj2_row.track_id]),
                 },
             )
 
@@ -662,10 +614,7 @@ class BreakObjectSerializer(serializers.Serializer):
 
         # 2️ Active object validation
         try:
-            obj_track = ObjectLifecycleService.get_active_object(
-                project_id=project_id,
-                object_id=object_id
-            )
+            obj_track = ObjectLifecycleService.get_active_object(project_id=project_id, object_id=object_id)
         except ObjectTrack.DoesNotExist:
             raise serializers.ValidationError("Active object not found")
 
@@ -686,7 +635,6 @@ class BreakObjectSerializer(serializers.Serializer):
 
         return data
 
-
     def create(self, validated_data):
         project_id = self.context["project_id"]
 
@@ -695,7 +643,7 @@ class BreakObjectSerializer(serializers.Serializer):
         obj_track = validated_data["obj_track"]
         start_frame = obj_track.start_frame
         end_frame = obj_track.end_frame
-        
+
         # ---------------------------
         # SNAPSHOT: BEFORE STATE
         # ---------------------------
@@ -707,20 +655,15 @@ class BreakObjectSerializer(serializers.Serializer):
                     frame__frame_no__gt=break_frame,
                     frame__frame_no__lte=end_frame,
                 ),
-                "ObjectTrack": ObjectTrack.objects.filter(
-                    track_id=obj_track.track_id
-                ),
+                "ObjectTrack": ObjectTrack.objects.filter(track_id=obj_track.track_id),
             },
-            after_qs_map={}
+            after_qs_map={},
         )
 
         with transaction.atomic():
-
             # Generate new object_id
             new_object_id = (
-                ObjectTrack.objects
-                .filter(project_id_id=project_id)
-                .aggregate(m=Max("object_id"))["m"] or 0
+                ObjectTrack.objects.filter(project_id_id=project_id).aggregate(m=Max("object_id"))["m"] or 0
             ) + 1
 
             # Update FrameObject (frames AFTER break)
@@ -729,7 +672,7 @@ class BreakObjectSerializer(serializers.Serializer):
                 frame__project_id_id=project_id,
                 frame__frame_no__gt=break_frame,
                 frame__frame_no__lte=end_frame,
-                object_id=object_id
+                object_id=object_id,
             ).update(object_id=new_object_id)
 
             # Update old object_track
@@ -744,7 +687,7 @@ class BreakObjectSerializer(serializers.Serializer):
                 start_frame=break_frame + 1,
                 end_frame=end_frame,
                 object_status=1,
-                operation_note=f"break_from_{break_frame + 1}_to_{end_frame}"
+                operation_note=f"break_from_{break_frame + 1}_to_{end_frame}",
             )
 
             # ---------------------------
@@ -759,10 +702,8 @@ class BreakObjectSerializer(serializers.Serializer):
                         frame__frame_no__gt=break_frame,
                         frame__frame_no__lte=end_frame,
                     ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
-                        track_id__in=[obj_track.track_id, new_track.track_id]
-                    ),
-                }
+                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj_track.track_id, new_track.track_id]),
+                },
             )
 
             # ---------------------------
@@ -781,7 +722,7 @@ class BreakObjectSerializer(serializers.Serializer):
                     "new_object_id": new_object_id,
                     "new_object_id_start": new_track.start_frame,
                     "new_object_id_end": new_track.end_frame,
-                }
+                },
             )
 
         return {
@@ -833,9 +774,7 @@ class SwapObjectSerializer(serializers.Serializer):
             raise serializers.ValidationError({"object_2_id": "Object not found"})
 
         if data["current_frame"] > min(obj1_track.end_frame, obj2_track.end_frame):
-            raise serializers.ValidationError(
-                {"current_frame": "Swap frame outside overlapping lifetime"}
-            )
+            raise serializers.ValidationError({"current_frame": "Swap frame outside overlapping lifetime"})
 
         data["project_id"] = project_id
         data["obj1_track"] = obj1_track
@@ -870,11 +809,9 @@ class SwapObjectSerializer(serializers.Serializer):
                         frame__frame_no__gte=swap_start,
                         frame__frame_no__lte=swap_end,
                     ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
-                    "ObjectTrack": ObjectTrack.objects.filter(
-                        track_id__in=[obj1_track.track_id, obj2_track.track_id]
-                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_track.track_id, obj2_track.track_id]),
                 },
-                after_qs_map={}, # Empty after_qs_map puts everything in 'deleted'
+                after_qs_map={},  # Empty after_qs_map puts everything in 'deleted'
             )
 
             # 1️⃣ obj1 → TEMP
@@ -905,18 +842,13 @@ class SwapObjectSerializer(serializers.Serializer):
             obj1_old_end = obj1_track.end_frame
             obj2_old_end = obj2_track.end_frame
 
-
             obj1_track.start_frame = current_frame
             obj1_track.end_frame = obj2_old_end
-            obj1_track.operation_note = (
-                f"swap_from_frame_{current_frame}_with_{obj2}"
-            )
+            obj1_track.operation_note = f"swap_from_frame_{current_frame}_with_{obj2}"
 
             obj2_track.start_frame = current_frame
             obj2_track.end_frame = obj1_old_end
-            obj2_track.operation_note = (
-                f"swap_from_frame_{current_frame}_with_{obj1}"
-            )
+            obj2_track.operation_note = f"swap_from_frame_{current_frame}_with_{obj1}"
 
             obj1_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
             obj2_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
@@ -925,16 +857,14 @@ class SwapObjectSerializer(serializers.Serializer):
             # SNAPSHOT — AFTER (Capture swapped state)
             # =====================================================
             after_state = SnapshotBuilder.build(
-                before_qs_map={}, # Empty before_qs_map puts everything in 'created'
+                before_qs_map={},  # Empty before_qs_map puts everything in 'created'
                 after_qs_map={
                     "FrameObject": FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         frame__frame_no__gte=swap_start,
                         frame__frame_no__lte=swap_end,
                     ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
-                    "ObjectTrack": ObjectTrack.objects.filter(
-                        track_id__in=[obj1_track.track_id, obj2_track.track_id]
-                    ),
+                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_track.track_id, obj2_track.track_id]),
                 },
             )
 
@@ -978,7 +908,6 @@ class SwapObjectSerializer(serializers.Serializer):
         }
 
 
-
 class DeleteObjectSerializer(serializers.Serializer):
     object_id = serializers.IntegerField(required=True)
     start_frame = serializers.IntegerField(required=True)
@@ -999,25 +928,17 @@ class DeleteObjectSerializer(serializers.Serializer):
 
         # Frame range validation
         if start_frame > end_frame:
-            raise serializers.ValidationError(
-                "start_frame must be less than or equal to end_frame"
-            )
-
+            raise serializers.ValidationError("start_frame must be less than or equal to end_frame")
 
         try:
-            obj_track = ObjectLifecycleService.get_active_object(
-                project_id=project_id,
-                object_id=object_id
-            )
+            obj_track = ObjectLifecycleService.get_active_object(project_id=project_id, object_id=object_id)
         except ObjectTrack.DoesNotExist:
             raise serializers.ValidationError("Active object not found")
-
 
         # Range must lie inside lifecycle
         if start_frame < obj_track.start_frame or end_frame > obj_track.end_frame:
             raise serializers.ValidationError(
-                f"Delete range must be between "
-                f"{obj_track.start_frame} and {obj_track.end_frame}"
+                f"Delete range must be between {obj_track.start_frame} and {obj_track.end_frame}"
             )
 
         data["obj_track"] = obj_track
@@ -1062,7 +983,7 @@ class DeleteObjectSerializer(serializers.Serializer):
                         object_id=object_id,
                     ),
                 },
-                after_qs_map={}
+                after_qs_map={},
             )
 
             # ---- APPLY SOFT DELETE ----
@@ -1073,10 +994,7 @@ class DeleteObjectSerializer(serializers.Serializer):
                 frame__frame_no__lte=end_frame,
             ).update(is_active=False)
 
-            ObjectLifecycleService.deactivate_object(
-                obj_track,
-                note=f"deleted_frames_{start_frame}_to_{end_frame}"
-            )
+            ObjectLifecycleService.deactivate_object(obj_track, note=f"deleted_frames_{start_frame}_to_{end_frame}")
 
             # ---------------------------
             # SNAPSHOT: AFTER STATE
@@ -1094,7 +1012,7 @@ class DeleteObjectSerializer(serializers.Serializer):
                         project_id_id=project_id,
                         object_id=object_id,
                     ),
-                }
+                },
             )
 
             # ---------------------------
@@ -1112,13 +1030,11 @@ class DeleteObjectSerializer(serializers.Serializer):
                 },
             )
 
-
-
         return {
             "object_id": object_id,
             "deleted_range": f"{start_frame}-{end_frame}",
             "frames_affected": affected_frames,
-            "object_status": 0
+            "object_status": 0,
         }
 
 
@@ -1151,32 +1067,35 @@ class RedoSerializer(serializers.Serializer):
         except ValueError as e:
             raise serializers.ValidationError(str(e))
 
+
 ##########################################
 # frame_object_range_no_fallback
 #########################################
+
 
 class FrameObjectRangeNoFallbackSerializer(serializers.Serializer):
     """
     Serializer to handle fetching object data for a range of frames without fallback.
     """
+
     start = serializers.IntegerField(required=True, help_text="Start frame id (inclusive)")
     end = serializers.IntegerField(required=True, help_text="End frame id (inclusive, max span 900)")
     video_id = serializers.IntegerField(required=True, help_text="Video ID (passed from view)")
 
     def validate(self, attrs):
-        start = attrs.get('start')
-        end = attrs.get('end')
-        video_id = attrs.get('video_id')
+        start = attrs.get("start")
+        end = attrs.get("end")
+        video_id = attrs.get("video_id")
 
         if start < 0 or end < 0:
             raise serializers.ValidationError({"start": "Start frame number must be non-negative"})
-        
+
         if start > end:
             raise serializers.ValidationError({"start": "start must be <= end"})
 
         if end - start + 1 > 900:
             raise serializers.ValidationError({"end": "range cannot exceed 900 frames"})
-        
+
         if not Project.objects.filter(project_id=video_id).exists():
             raise serializers.ValidationError({"video_id": "Invalid video_id"})
 
@@ -1186,9 +1105,7 @@ class FrameObjectRangeNoFallbackSerializer(serializers.Serializer):
         data = self.validated_data
 
         objects = FrameObjectRangeNoFallbackService.fetch(
-            project_id=data["video_id"],
-            start_frame=data["start"],
-            end_frame=data["end"]
+            project_id=data["video_id"], start_frame=data["start"], end_frame=data["end"]
         )
 
         return {
@@ -1208,6 +1125,4 @@ class TrkExportSerializer(serializers.Serializer):
         return value
 
     def export(self):
-        return TrkExportService.export(
-            project_id=self.validated_data["project_id"]
-        )
+        return TrkExportService.export(project_id=self.validated_data["project_id"])

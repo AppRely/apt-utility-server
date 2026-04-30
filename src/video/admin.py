@@ -1,13 +1,16 @@
 from django.contrib import admin
+
+from src.common.admin import BaseAdmin
+
 from .models import (
-    Project,
-    VideoFrame,
+    ActivityLog,
     FrameObject,
     ObjectTrack,
-    ActivityLog,
     OperationSnapshot,
+    Project,
+    VideoFrame,
 )
-from src.common.admin import BaseAdmin
+
 
 @admin.register(Project)
 class ProjectAdmin(BaseAdmin):
@@ -33,6 +36,7 @@ class ProjectAdmin(BaseAdmin):
     list_filter = ("status", "project_status")
     readonly_fields = ("created_at", "updated_at")
 
+
 @admin.register(VideoFrame)
 class VideoFrameAdmin(BaseAdmin):
     list_display = (
@@ -47,10 +51,13 @@ class VideoFrameAdmin(BaseAdmin):
     list_filter = ("project_id__project_id",)
     readonly_fields = ()
 
+    @admin.display(
+        description="Project Name",
+        ordering="project_id__project_name",
+    )
     def get_project_name(self, obj):
         return obj.project_id.project_name
-    get_project_name.short_description = "Project Name"
-    get_project_name.admin_order_field = "project_id__project_name"
+
 
 @admin.register(FrameObject)
 class FrameObjectAdmin(BaseAdmin):
@@ -63,22 +70,27 @@ class FrameObjectAdmin(BaseAdmin):
         "confidence",
         "tag",
         "timestamp",
-        "is_active"
+        "is_active",
     )
 
     search_fields = ("frame__id", "object_id")
     list_filter = ("frame__project_id__project_id", "object_id")
     readonly_fields = ()
 
+    @admin.display(
+        description="Project Name",
+        ordering="frame__project_id__project_name",
+    )
     def get_project_name(self, obj):
         return obj.frame.project_id.project_name
-    get_project_name.short_description = "Project Name"
-    get_project_name.admin_order_field = "frame__project_id__project_name"
 
+    @admin.display(
+        description="Frame Number",
+        ordering="frame__frame_no",
+    )
     def get_frame_number(self, obj):
         return obj.frame.frame_no
-    get_frame_number.short_description = "Frame Number"
-    get_frame_number.admin_order_field = "frame__frame_no"
+
 
 @admin.register(ObjectTrack)
 class ObjectTrackAdmin(BaseAdmin):
@@ -88,18 +100,19 @@ class ObjectTrackAdmin(BaseAdmin):
         "object_id",
         "start_frame",
         "end_frame",
-        "object_status",       
-        "operation_note", 
+        "object_status",
+        "operation_note",
     )
 
     search_fields = ("track_id", "project_id__project_id", "object_id")
     list_filter = ("project_id__project_id", "object_id")
 
-    readonly_fields = () 
+    readonly_fields = ()
+
     # Custom column for raw integer project_id
+    @admin.display(description="Project ID")
     def get_project_id(self, obj):
-        return obj.project_id_id   # <-- REAL integer FK
-    get_project_id.short_description = "Project ID"
+        return obj.project_id_id  # <-- REAL integer FK
 
 
 @admin.register(ActivityLog)

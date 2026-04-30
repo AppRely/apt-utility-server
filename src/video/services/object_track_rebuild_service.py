@@ -1,12 +1,12 @@
 # src/video/services/object_track_rebuild_service.py
 
 from django.db import transaction
-from django.db.models import Min, Max
+from django.db.models import Max, Min
+
 from ..models import FrameObject, ObjectTrack
 
 
 class ObjectTrackRebuildService:
-
     @staticmethod
     @transaction.atomic
     def rebuild(*, project_id: int):
@@ -19,8 +19,7 @@ class ObjectTrackRebuildService:
 
         # 2️⃣ Aggregate ranges from FrameObject
         qs = (
-            FrameObject.objects
-            .filter(frame__project_id=project_id, is_active=True)
+            FrameObject.objects.filter(frame__project_id=project_id, is_active=True)
             .values("object_id")
             .annotate(
                 start_frame=Min("frame__frame_no"),

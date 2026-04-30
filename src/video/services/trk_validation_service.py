@@ -2,7 +2,6 @@ from ..TrkFile import Trk
 
 
 class TrkValidationService:
-
     @staticmethod
     def load_and_validate(trk_path):
         trk = Trk(trk_path)

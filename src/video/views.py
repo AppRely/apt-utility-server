@@ -1,50 +1,52 @@
-import json
 import gzip
 import logging
-import os
-import base64
-import cv2
 import math
-import numpy as np
+import os
+from urllib import response
+
+import orjson
+from django.conf import settings
+from django.db.models import Q
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
-from django.conf import settings
-from rest_framework import viewsets
-from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
-from rest_framework import status
-from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from rest_framework import serializers
-from .models import Project, VideoFrame, FrameObject, ObjectTrack, ActivityLog
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+
+from .models import Project, VideoFrame
 from .serializers import (
-    ProjectUploadSerializer, 
-    FrameObjectRangeSerializer,
+    ActivityLogRequestSerializer,
+    ActivityLogSerializer,
+    BreakObjectSerializer,
+    DeleteObjectSerializer,
+    DeleteProjectSerializer,
     FrameInfoSerializer,
-    ProjectSerializer,
+    FrameObjectRangeNoFallbackSerializer,
+    FrameObjectRangeSerializer,
+    LinkObjectSerializer,
     ListUniqueIdsSerializer,
     ObjectTrackDetailsSerializer,
-    LinkObjectSerializer,
-    ActivityLogSerializer,
-    ActivityLogRequestSerializer,
-    BreakObjectSerializer,
-    SwapObjectSerializer,
-    DeleteObjectSerializer,
-    UndoSerializer,
+    ProjectSerializer,
+    ProjectUploadSerializer,
     RedoSerializer,
-    FrameObjectRangeNoFallbackSerializer,
+    SwapObjectSerializer,
     TrkExportSerializer,
-    DeleteProjectSerializer
+    UndoSerializer,
 )
 
+from wsgiref.util import FileWrapper
+from django.http import StreamingHttpResponse
+from rest_framework.decorators import action
+import mimetypes
 # Import Movie class from movies.py and Trk from TrkFile.py
-from .movies import Movie
-from .TrkFile import Trk
 
 logger = logging.getLogger(__name__)
+
+CHUNK_SIZE = 64 * 1024  # 64KB optimal chunk size
 
 
 def replace_nan_with_none(obj):
@@ -58,10 +60,9 @@ def replace_nan_with_none(obj):
 
     if isinstance(obj, float) and (math.isnan(obj)):
         return None
-    elif isinstance(obj, list):
+    if isinstance(obj, list):
         return [replace_nan_with_none(x) for x in obj]
-    else:
-        return obj
+    return obj
 
 
 class VideoViewSet(viewsets.ModelViewSet):
@@ -76,25 +77,34 @@ class VideoViewSet(viewsets.ModelViewSet):
     - Activity log (audit trail) management
     """
 
+    queryset = Project.objects.all()
+    serializer_class = ProjectSerializer
+
     parser_classes = (MultiPartParser, FormParser, JSONParser)
     permission_classes = [AllowAny]
 
     def _has_frame_data(self, video_id, frame_no):
         """Check if frame exists in VideoFrame."""
-        return VideoFrame.objects.filter(
-            project_id=video_id,
-            frame_no=frame_no
-        ).exists()
+        return VideoFrame.objects.filter(project_id=video_id, frame_no=frame_no).exists()
 
     def _get_previous_valid_frame(self, video_id, frame_no):
         """Return nearest previous valid frame, else None."""
-        row = (
-            VideoFrame.objects
-            .filter(project_id=video_id, frame_no__lt=frame_no)
-            .order_by('-frame_no')
-            .first()
-        )
+        row = VideoFrame.objects.filter(project_id=video_id, frame_no__lt=frame_no).order_by("-frame_no").first()
         return row.frame_no if row else None
+    
+    def _file_iterator(self, file_obj, start, length):
+        file_obj.seek(start)
+        remaining = length
+
+        try:
+            while remaining > 0:
+                chunk = file_obj.read(min(CHUNK_SIZE, remaining))
+                if not chunk:
+                    break
+                yield chunk
+                remaining -= len(chunk)
+        finally:
+            file_obj.close()  # ensures file is closed
 
     def _stream_video_with_range(self, file_path, range_header):
         """
@@ -103,51 +113,78 @@ class VideoViewSet(viewsets.ModelViewSet):
         file_size = os.path.getsize(file_path)
         try:
             # Parse Range header
-            range_values = range_header.replace('bytes=', '').split('-')
+            range_values = range_header.replace("bytes=", "").split("-")
             start = int(range_values[0]) if range_values[0] else 0
             end = int(range_values[1]) if len(range_values) > 1 and range_values[1] else file_size - 1
             end = min(end, file_size - 1)
             length = end - start + 1
-            with open(file_path, 'rb') as f:
-                f.seek(start)
-                data = f.read(length)
-            response = HttpResponse(data, status=206, content_type='video/mp4')
-            response['Content-Range'] = f'bytes {start}-{end}/{file_size}'
-            response['Accept-Ranges'] = 'bytes'
-            response['Content-Length'] = str(length)
-            response['Cache-Control'] = 'public, max-age=3600'
+
+            file_obj = open(file_path, "rb")
+            # file_obj.seek(start)
+            content_type, _ = mimetypes.guess_type(file_path)
+            content_type = content_type or "video/mp4"
+
+            response = StreamingHttpResponse(
+                self._file_iterator(file_obj, start, length),
+                status=206,
+                content_type=content_type,
+            )
+
+            # Required headers (DO NOT CHANGE – browser depends on these)
+            response["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+            response["Accept-Ranges"] = "bytes"
+            response["Content-Length"] = str(length)
+            response["Cache-Control"] = "public, max-age=3600"
             return response
         except Exception as e:
             logger.error("Error processing Range request: %s", str(e), exc_info=True)
             raise
 
-    
+    def _stream_full_video(self, file_path):
+        """
+        Optimized full video streaming (no memory load)
+        """
+        file_size = os.path.getsize(file_path)
+        file_obj = open(file_path, "rb")
+        content_type, _ = mimetypes.guess_type(file_path)
+        content_type = content_type or "video/mp4"
+        response = StreamingHttpResponse(
+            self._file_iterator(file_obj, 0, file_size),
+            content_type=content_type,
+        )
+
+        response["Content-Length"] = str(file_size)
+        response["Accept-Ranges"] = "bytes"
+        response["Cache-Control"] = "public, max-age=3600"
+        # response["Connection"] = "keep-alive"   # ADD HERE
+        return response
+
     @swagger_auto_schema(
         operation_description="Return object/coordinate data for a consecutive frame range (max 150 frames) from DB.",
         manual_parameters=[
             openapi.Parameter(
-                'start',
+                "start",
                 openapi.IN_QUERY,
                 type=openapi.TYPE_INTEGER,
                 required=True,
-                description='Start frame id (inclusive)',
+                description="Start frame id (inclusive)",
             ),
             openapi.Parameter(
-                'end',
+                "end",
                 openapi.IN_QUERY,
                 type=openapi.TYPE_INTEGER,
                 required=True,
-                description='End frame id (inclusive, max span 150)',
+                description="End frame id (inclusive, max span 150)",
             ),
         ],
         responses={
-            200: 'JSON payload for the requested frame range',
-            400: 'Validation error or frame out of range',
-            404: 'No valid previous frame found',
-            500: 'Server error'
-            },
+            200: "JSON payload for the requested frame range",
+            400: "Validation error or frame out of range",
+            404: "No valid previous frame found",
+            500: "Server error",
+        },
     )
-    @action(detail=True, methods=['get'], url_path='frame-object-range')
+    @action(detail=True, methods=["get"], url_path="frame-object-range")
     def frame_object_range(self, request, pk=None):
         """
         GET /api/v1/videos/{id}/frame-object-range?start=<start>&end=<end>
@@ -168,8 +205,8 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         try:
             data = request.query_params.copy()
-            data['video_id'] = pk
-            
+            data["video_id"] = pk
+
             serializer = FrameObjectRangeSerializer(data=data)
             serializer.is_valid(raise_exception=True)
 
@@ -177,13 +214,8 @@ class VideoViewSet(viewsets.ModelViewSet):
             video_id = validated["video_id"]
             start = validated["start"]
             end = validated["end"]
-        
-            max_row = (
-                VideoFrame.objects
-                .filter(project_id=video_id)
-                .order_by('-frame_no')
-                .first()
-            )
+
+            max_row = VideoFrame.objects.filter(project_id=video_id).order_by("-frame_no").first()
             if max_row and end > max_row.frame_no:
                 return Response(
                     {
@@ -201,10 +233,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 ).values_list("frame_no", flat=True)
             )
 
-            missing_frames = [
-                f for f in range(start, end + 1)
-                if f not in existing_frames
-            ]
+            missing_frames = [f for f in range(start, end + 1) if f not in existing_frames]
 
             fallback_frames = []
             for frame in missing_frames:
@@ -224,7 +253,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_200_OK,
             )
-           
+
         except serializers.ValidationError as ve:
             return Response(
                 {
@@ -245,34 +274,33 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-    
     @swagger_auto_schema(
         operation_description="Get frame information by video ID and frame number from database. Returns all tracking data for the specified frame.",
         manual_parameters=[
             openapi.Parameter(
-                'video',
+                "video",
                 openapi.IN_QUERY,
                 type=openapi.TYPE_INTEGER,
                 required=True,
-                description='Video ID (project_id)',
+                description="Video ID (project_id)",
             ),
             openapi.Parameter(
-                'frame',
+                "frame",
                 openapi.IN_QUERY,
                 type=openapi.TYPE_INTEGER,
                 required=True,
-                description='Frame number',
+                description="Frame number",
             ),
         ],
         pagination_class=None,
         responses={
-            200: 'JSON with frame data and tracking information', 
-            400: 'Validation error',
-            404: 'No valid previous frame found',
-            500: 'Server error'
+            200: "JSON with frame data and tracking information",
+            400: "Validation error",
+            404: "No valid previous frame found",
+            500: "Server error",
         },
     )
-    @action(detail=False, methods=['get'], url_path='frame')
+    @action(detail=False, methods=["get"], url_path="frame")
     def get_frame_info(self, request):
         """
         GET /api/v1/frame?video=ID&frame=NUM
@@ -292,7 +320,6 @@ class VideoViewSet(viewsets.ModelViewSet):
         try:
             serializer = FrameInfoSerializer(data=request.query_params)
             serializer.is_valid(raise_exception=True)
-            
 
             payload = serializer.get_data()
 
@@ -326,18 +353,13 @@ class VideoViewSet(viewsets.ModelViewSet):
     @swagger_auto_schema(
         operation_description="Upload project video + TRK data",
         request_body=ProjectUploadSerializer,
-        responses={
-            201: "Success", 
-            400: "Validation error", 
-            500: "Server error"
-        },
+        responses={201: "Success", 400: "Validation error", 500: "Server error"},
     )
-    @action(detail=False, methods=["post"], url_path="project-upload", 
-            parser_classes=[MultiPartParser, FormParser])
+    @action(detail=False, methods=["post"], url_path="project-upload", parser_classes=[MultiPartParser, FormParser])
     def project_upload(self, request):
         """
         POST /videos/project-upload/
-       
+
         Upload a project video along with its TRK tracking file.
         This endpoint validates the uploaded files, persists them to disk,
         and processes the TRK file to insert tracking data into the database.
@@ -353,11 +375,11 @@ class VideoViewSet(viewsets.ModelViewSet):
                 data=request.data,
                 context={"request": request},
             )
-                
+
             serializer.is_valid(raise_exception=True)
 
             result = serializer.save()
-            
+
             return Response(
                 {
                     "status": "success",
@@ -369,7 +391,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_201_CREATED,
             )
-            
+
         except serializers.ValidationError as ve:
             return Response(
                 {
@@ -392,12 +414,9 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         operation_description="Get list of all in-progress projects with essential details",
-        responses={
-            200: ProjectSerializer(many=True),
-            500: "Server error"
-        },
+        responses={200: ProjectSerializer(many=True), 500: "Server error"},
     )
-    @action(detail=False, methods=['get'], url_path='project-list')
+    @action(detail=False, methods=["get"], url_path="project-list")
     def project_list(self, request):
         """
         GET /videos/project-list/
@@ -412,8 +431,9 @@ class VideoViewSet(viewsets.ModelViewSet):
             Response: List of serialized project records.
         """
         try:
-
-            projects = Project.objects.filter(Q(project_status="inprogress") | Q(project_status="completed"),status="Completed").order_by('project_id')      
+            projects = Project.objects.filter(
+                Q(project_status="inprogress") | Q(project_status="completed"), status="Completed"
+            ).order_by("project_id")
 
             serializer = ProjectSerializer(projects, many=True)
             return Response(
@@ -423,7 +443,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_200_OK,
             )
-            
+
         except Exception:
             logger.error("Failed to fetch projects", exc_info=True)
             return Response(
@@ -435,20 +455,19 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
     ########################
-    #stream video logic
+    # stream video logic
     ########################
 
     @swagger_auto_schema(
         operation_description="Stream the project video file with HTTP Range support.",
-        responses=
-        {
-            206: 'Partial Content', 
-            200: 'Full Content', 
-            404: 'Not Found',
-            500: 'Server Error',
+        responses={
+            206: "Partial Content",
+            200: "Full Content",
+            404: "Not Found",
+            500: "Server Error",
         },
     )
-    @action(detail=True, methods=['get'], url_path='project-stream')
+    @action(detail=True, methods=["get"], url_path="project-stream")
     def project_stream(self, request, pk=None):
         """
         GET /videos/{id}/project-stream/
@@ -465,67 +484,48 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         try:
             project = get_object_or_404(Project, pk=pk)
-            
+
             video_folder = os.path.join(settings.MEDIA_ROOT, "video_folder")
 
             if not project.video_name:
                 return Response(
-                {
-                    "status": "error", 
-                    "message": "Video filename missing in project"
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
+                    {"status": "error", "message": "Video filename missing in project"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
             file_path = os.path.join(video_folder, project.video_name)
 
             if not os.path.exists(file_path):
                 return Response(
-                    {
-                        "status": "error", 
-                        "message": "Video file not found on server"
-                    },
+                    {"status": "error", "message": "Video file not found on server"},
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-            range_header = request.headers.get('Range')
+            range_header = request.headers.get("Range")
             if range_header:
                 return self._stream_video_with_range(file_path, range_header)
-            
-            response = FileResponse(
-                open(file_path, 'rb'), 
-                content_type='video/mp4'
-            )
-            response['Content-Length'] = str(os.path.getsize(file_path))
-            response['Accept-Ranges'] = 'bytes'
-            response['Cache-Control'] = 'public, max-age=3600'
-            return response
-            
+
+            # Normal request
+            return self._stream_full_video(file_path)
+
         except Exception:
             logger.error("Error streaming video file", exc_info=True)
             return Response(
-            {
-                "status": "error", 
-                "message": "Something went wrong while streaming the video"
-            },
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+                {"status": "error", "message": "Something went wrong while streaming the video"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     ########################
-    #stream trk logic
+    # stream trk logic
     ########################
     @swagger_auto_schema(
         operation_description="Stream/download the raw TRK file content for the project.",
-        responses={
-            200: 'TRK file', 
-            404: 'TRK file not found',
-            500: 'Server error'
-            },
+        responses={200: "TRK file", 404: "TRK file not found", 500: "Server error"},
     )
-    @action(detail=True, methods=['get'], url_path='project-stream-trk')
+    @action(detail=True, methods=["get"], url_path="project-stream-trk")
     def project_stream_trk(self, request, pk=None):
         """
-        GET /videos/{id}/project-stream-trk/ 
+        GET /videos/{id}/project-stream-trk/
 
         Stream or download the raw TRK file associated with a project.
         The file is returned as an attachment for download or inspection.
@@ -560,14 +560,14 @@ class VideoViewSet(viewsets.ModelViewSet):
                     },
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            
+
             response = FileResponse(
-                open(trk_path, 'rb'),
+                open(trk_path, "rb"),
                 as_attachment=True,
                 filename=os.path.basename(trk_path),
                 content_type="application/octet-stream",
             )
-            response['Cache-Control'] = 'public, max-age=3600'
+            response["Cache-Control"] = "public, max-age=3600"
             return response
 
         except Exception:
@@ -579,20 +579,15 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
- 
 
     @swagger_auto_schema(
         operation_description="Get list of all unique object IDs for the project.",
-        responses={
-            200: "List of unique IDs", 
-            400: "Validation error", 
-            500: "Server error"
-        }
+        responses={200: "List of unique IDs", 400: "Validation error", 500: "Server error"},
     )
-    @action(detail=True, methods=['get'], url_path='unique-ids')
+    @action(detail=True, methods=["get"], url_path="unique-ids")
     def get_unique_ids(self, request, pk=None):
         """
-        GET /api/v1/videos/{project_id}/unique-ids/ 
+        GET /api/v1/videos/{project_id}/unique-ids/
 
         Retrieve all unique object IDs for a project.
         This endpoint returns the list of distinct object identifiers
@@ -605,9 +600,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             Response: List of unique object IDs.
         """
         try:
-            serializer = ListUniqueIdsSerializer(
-                data={}, context={"project_id": pk}
-            )
+            serializer = ListUniqueIdsSerializer(data={}, context={"project_id": pk})
             serializer.is_valid(raise_exception=True)
 
             payload = serializer.get_all_ids()
@@ -639,23 +632,14 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-
     @swagger_auto_schema(
         operation_description="Get start/end frame for a unique object and check if a frame lies inside the range.",
         manual_parameters=[
             openapi.Parameter(
-                "frame", 
-                openapi.IN_QUERY, 
-                type=openapi.TYPE_INTEGER,
-                required=True, 
-                description="Frame number to check"
+                "frame", openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description="Frame number to check"
             )
         ],
-        responses={
-            200: "Object details", 
-            400: "Validation error", 
-            500: "Server Error"
-        }
+        responses={200: "Object details", 400: "Validation error", 500: "Server Error"},
     )
     @action(detail=True, methods=["get"], url_path="unique-ids/(?P<object_id>\\d+)")
     def get_unique_id_details(self, request, pk=None, object_id=None):
@@ -677,7 +661,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         try:
             serializer = ObjectTrackDetailsSerializer(
                 data={
-                    "object_id": object_id, 
+                    "object_id": object_id,
                     "frame": request.query_params.get("frame"),
                 },
                 context={"project_id": pk},
@@ -712,7 +696,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-    
+
     @swagger_auto_schema(
         method="put",
         operation_description="Merge object_2 into object_1.",
@@ -721,7 +705,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             200: "Objects merged successfully",
             400: "Validation error",
             500: "Internal server error",
-        }
+        },
     )
     @action(detail=True, methods=["put"], url_path="link-objects")
     def link_objects(self, request, pk=None):
@@ -740,10 +724,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             Response: Result of the merge operation.
         """
         try:
-            serializer = LinkObjectSerializer(
-                data=request.data,
-                context={"video_id": pk}
-            )
+            serializer = LinkObjectSerializer(data=request.data, context={"video_id": pk})
             serializer.is_valid(raise_exception=True)
 
             result = serializer.merge_data()
@@ -766,7 +747,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         except Exception:
             logger.error("Error linking objects", exc_info=True)
             return Response(
@@ -781,11 +762,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         method="post",
         operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
         request_body=ActivityLogSerializer,
-        responses={
-            201: "Activity logged successfully", 
-            400: "Validation error", 
-            500: "Internal server error"
-        }
+        responses={201: "Activity logged successfully", 400: "Validation error", 500: "Internal server error"},
     )
     @action(detail=False, methods=["post"], url_path="add-activity-log")
     def add_activity_log(self, request):
@@ -817,7 +794,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "message": "Activity log entry created",
                     "data": serializer.data,
                 },
-                status=status.HTTP_201_CREATED
+                status=status.HTTP_201_CREATED,
             )
 
         except serializers.ValidationError as ve:
@@ -825,9 +802,9 @@ class VideoViewSet(viewsets.ModelViewSet):
                 {
                     "status": "error",
                     "message": "Invalid input data",
-                    "errors": ve.detail, 
+                    "errors": ve.detail,
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception as e:
@@ -837,25 +814,23 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "status": "error",
                     "message": "Something went wrong while creating the activity log.",
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @swagger_auto_schema(
         operation_description="Get all activity logs related to a video using video ID.",
         manual_parameters=[
-            openapi.Parameter('video_id', openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description='Video ID'),
+            openapi.Parameter(
+                "video_id", openapi.IN_QUERY, type=openapi.TYPE_INTEGER, required=True, description="Video ID"
+            ),
         ],
-        responses={
-            200: "List of activity logs", 
-            400: "Validation error", 
-            500: "Server error"
-        },
-        pagination_class=None
+        responses={200: "List of activity logs", 400: "Validation error", 500: "Server error"},
+        pagination_class=None,
     )
-    @action(detail=False, methods=['get'], url_path='activity/logs')
+    @action(detail=False, methods=["get"], url_path="activity/logs")
     def get_activity_logs(self, request):
         """
-        GET /api/v1/videos/activity/logs?video_id=ID 
+        GET /api/v1/videos/activity/logs?video_id=ID
 
         Retrieve activity logs associated with a video.
         Returns a chronological list of audit trail entries for the given
@@ -874,13 +849,7 @@ class VideoViewSet(viewsets.ModelViewSet):
 
             payload = serializer.get_data()
 
-            return Response(
-                {
-                    "status": "success",
-                    "data": payload
-                },
-                status=status.HTTP_200_OK
-            )
+            return Response({"status": "success", "data": payload}, status=status.HTTP_200_OK)
 
         except serializers.ValidationError as ve:
             return Response(
@@ -889,19 +858,18 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "message": "Invalid query parameters",
                     "errors": ve.detail,
                 },
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        except Exception as e:
+        except Exception:
             logger.error("Error fetching activity logs", exc_info=True)
             return Response(
                 {
                     "status": "error",
                     "message": "An unexpected error occurred while fetching activity logs",
                 },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
 
     @swagger_auto_schema(
         method="post",
@@ -938,10 +906,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             Response: Result of the break operation.
         """
         try:
-            serializer = BreakObjectSerializer(
-                data=request.data,
-                context={"project_id": pk}
-            )
+            serializer = BreakObjectSerializer(data=request.data, context={"project_id": pk})
             serializer.is_valid(raise_exception=True)
             result = serializer.save()
 
@@ -979,11 +944,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         method="put",
         operation_description="Swap object_1 with object_2 inside VideoData and ObjectTrack.",
         request_body=SwapObjectSerializer,
-        responses={
-            200: "Swap successful", 
-            400: "Validation error", 
-            500: "Swap failed"
-        },
+        responses={200: "Swap successful", 400: "Validation error", 500: "Swap failed"},
     )
     @action(detail=True, methods=["put"], url_path="swap-objects")
     def swap_objects(self, request, pk=None):
@@ -1006,10 +967,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             Response: Result of the swap operation.
         """
         try:
-            serializer = SwapObjectSerializer(
-                data=request.data,
-                context={"video_id": pk}
-            )
+            serializer = SwapObjectSerializer(data=request.data, context={"video_id": pk})
             serializer.is_valid(raise_exception=True)
             result = serializer.swap_data()
             return Response(
@@ -1023,12 +981,12 @@ class VideoViewSet(viewsets.ModelViewSet):
 
         except serializers.ValidationError as ve:
             return Response(
-                    {
-                        "status": "error",
-                        "message": "Invalid input data",
-                        "errors": ve.detail,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception as e:
@@ -1048,8 +1006,8 @@ class VideoViewSet(viewsets.ModelViewSet):
         request_body=DeleteObjectSerializer,
         responses={
             200: "Object delete operation completed successfully",
-            400: "Validation error", 
-            500: "Internal server error"
+            400: "Validation error",
+            500: "Internal server error",
         },
     )
     @action(detail=True, methods=["post"], url_path="objects/delete")
@@ -1064,39 +1022,39 @@ class VideoViewSet(viewsets.ModelViewSet):
                 in the request body.
             pk (int): Project identifier.
         Returns:
-            Response: Result of the delete operation.   
+            Response: Result of the delete operation.
         """
         try:
-            serializer = DeleteObjectSerializer(
-                data=request.data,
-                context={"project_id": pk}
-            )
+            serializer = DeleteObjectSerializer(data=request.data, context={"project_id": pk})
             serializer.is_valid(raise_exception=True)
             result = serializer.save()
             return Response(
-                { 
-                    "status": "success", 
-                    "message": "Object deleted successfully", 
+                {
+                    "status": "success",
+                    "message": "Object deleted successfully",
                     "data": result,
-                }, 
-            status=status.HTTP_200_OK,)
+                },
+                status=status.HTTP_200_OK,
+            )
         except serializers.ValidationError as ve:
             return Response(
                 {
-                    "status": "error", 
+                    "status": "error",
                     "message": "Invalid input data",
                     "errors": ve.detail,
-                }, 
-            status=status.HTTP_400_BAD_REQUEST,)
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as e:
             logger.error(f"Error during delete object operation: {str(e)}", exc_info=True)
             return Response(
                 {
-                    "status": "error", 
-                    "message": "Something went wrong while deleting the object", 
+                    "status": "error",
+                    "message": "Something went wrong while deleting the object",
                     "errors": str(e),
-                }, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR,)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     # =========================
     # UNDO
@@ -1117,9 +1075,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         POST /api/v1/videos/{project_id}/undo/
         """
         try:
-            serializer = UndoSerializer(
-                data=request.data
-            )
+            serializer = UndoSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             result = serializer.execute()
 
@@ -1172,9 +1128,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         POST /api/v1/videos/{project_id}/redo/
         """
         try:
-            serializer = RedoSerializer(
-                data=request.data
-            )
+            serializer = RedoSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             result = serializer.execute()
 
@@ -1207,6 +1161,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
     ##########################
     # Frame Object Range No Fallback
     ##########################
@@ -1214,28 +1169,31 @@ class VideoViewSet(viewsets.ModelViewSet):
         operation_description="Return object/coordinate data for a consecutive frame range (max 900 frames) from DB without fallback.",
         manual_parameters=[
             openapi.Parameter(
-                'start',
+                "start",
                 openapi.IN_QUERY,
                 type=openapi.TYPE_INTEGER,
                 required=True,
-                description='Start frame id (inclusive)',
+                description="Start frame id (inclusive)",
             ),
             openapi.Parameter(
-                'end',
+                "end",
                 openapi.IN_QUERY,
                 type=openapi.TYPE_INTEGER,
                 required=True,
-                description='End frame id (inclusive, max span 900)',
+                description="End frame id (inclusive, max span 900)",
             ),
         ],
         responses={
-            200: 'JSON payload for the requested frame range',
-            400: 'Validation error or frame out of range',
-            404: 'Project not found',
-            500: 'Server error'
-            },
+            200: "JSON payload for the requested frame range",
+            400: "Validation error or frame out of range",
+            404: "Project not found",
+            500: "Server error",
+        },
     )
-    @action(detail=True, methods=['get'], url_path='frame-object-range-no-fallback')
+    # =====================================
+    #####################################
+    # =====================================
+    @action(detail=True, methods=["get"], url_path="frame-object-range-no-fallback")
     def frame_object_range_no_fallback(self, request, pk=None):
         """
         GET /api/v1/videos/{id}/frame-object-range-no-fallback?start=<start>&end=<end>
@@ -1243,27 +1201,48 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         try:
             data = request.query_params.copy()
-            data['video_id'] = pk
-            
+            data["video_id"] = pk
+
             serializer = FrameObjectRangeNoFallbackSerializer(data=data)
             serializer.is_valid(raise_exception=True)
 
             payload = serializer.get_data()
 
-            json_data = json.dumps(payload)
-            compressed_data = gzip.compress(json_data.encode('utf-8'))
+            # Safe ORJSON serialization
+            try:
+                json_data = orjson.dumps(payload, option=orjson.OPT_SERIALIZE_NUMPY)
+            except Exception as ser_err:
+                logger.error(f"[ORJSON ERROR] {str(ser_err)}", exc_info=True)
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "Serialization failed",
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            # Compression
+            try:
+                compressed_data = gzip.compress(json_data)
+            except Exception as comp_err:
+                logger.error(f"[GZIP ERROR] {str(comp_err)}", exc_info=True)
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "Compression failed",
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
             return Response(
                 {
                     "status": "success",
                     "data": compressed_data.hex(),
-					"compressed": True,
-                    "data": compressed_data.hex(),
-					"compressed": True,
+                    "compressed": True,
                 },
                 status=status.HTTP_200_OK,
             )
-           
+
         except serializers.ValidationError as ve:
             return Response(
                 {
@@ -1274,8 +1253,8 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        except Exception:
-            logger.error("Error fetching frame object range without fallback", exc_info=True)
+        except Exception as e:
+            logger.error(f"[UNEXPECTED ERROR] {str(e)}", exc_info=True)
             return Response(
                 {
                     "status": "error",
@@ -1283,8 +1262,6 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
-
 
     @swagger_auto_schema(
         method="post",
@@ -1308,8 +1285,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             result = serializer.export()
 
             download_url = request.build_absolute_uri(
-                f"/media/trk_exports/{result['project_id']}/"
-                f"project_{result['project_id']}_v{result['trk_version']}.trk"
+                f"/media/trk_exports/{result['project_id']}/project_{result['project_id']}_v{result['trk_version']}.trk"
             )
 
             return Response(
@@ -1352,7 +1328,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         responses={
             200: openapi.Response(
                 description="Project deleted successfully",
-                examples={"application/json": {"status": "success", "message": "Project deleted successfully"}}
+                examples={"application/json": {"status": "success", "message": "Project deleted successfully"}},
             ),
             400: "Validation error",
             404: "Project not found",
@@ -1377,14 +1353,13 @@ class VideoViewSet(viewsets.ModelViewSet):
                     },
                     status=status.HTTP_200_OK,
                 )
-            else:
-                return Response(
-                    {
-                        "status": "error",
-                        "message": message,
-                    },
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+            return Response(
+                {
+                    "status": "error",
+                    "message": message,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         except serializers.ValidationError as ve:
             return Response(

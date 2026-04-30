@@ -1,26 +1,31 @@
+import json
 import os
 import subprocess
-import json
 import uuid
+
 from django.conf import settings
 
 
 class ProjectFileStorageService:
-
     @staticmethod
     def get_video_fps(video_path):
         try:
             result = subprocess.run(
                 [
-                    "ffprobe", "-v", "error",
-                    "-select_streams", "v:0",
-                    "-show_entries", "stream=r_frame_rate",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    video_path
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=r_frame_rate",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    video_path,
                 ],
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
             )
             fps_str = result.stdout.strip()
             if "/" in fps_str:
@@ -29,7 +34,7 @@ class ProjectFileStorageService:
             return int(float(fps_str))
         except Exception:
             return 30
-        
+
     @staticmethod
     def save(project_name, video_file, tracking_file):
         media_root = settings.MEDIA_ROOT
@@ -57,20 +62,25 @@ class ProjectFileStorageService:
 
         # Convert to MP4 if not already MP4
         final_video_path = video_path
-        
+
         def is_browser_compatible(video_path):
             try:
                 result = subprocess.run(
                     [
-                        "ffprobe", "-v", "error",
-                        "-select_streams", "v:0",
-                        "-show_entries", "stream=codec_name,pix_fmt",
-                        "-of", "json",
-                        video_path
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_entries",
+                        "stream=codec_name,pix_fmt",
+                        "-of",
+                        "json",
+                        video_path,
                     ],
                     capture_output=True,
                     text=True,
-                    check=True
+                    check=True,
                 )
                 data = json.loads(result.stdout)
                 if "streams" in data and len(data["streams"]) > 0:
@@ -100,21 +110,33 @@ class ProjectFileStorageService:
 
                 subprocess.run(
                     [
-                        "ffmpeg", "-y", "-i", video_path,
-                        "-vf", f"fps={int(fps)}",
-                        "-vsync", "cfr",
-                        "-c:v", "libx264",
-                        "-pix_fmt", "yuv420p",
-                        "-preset", "ultrafast",
-                        "-tune", "fastdecode",
-                        "-threads", "0",
-                        "-crf", "28",
-                        "-movflags", "+faststart",
-                        final_video_path
+                        "ffmpeg",
+                        "-y",
+                        "-i",
+                        video_path,
+                        "-vf",
+                        f"fps={int(fps)}",
+                        "-vsync",
+                        "cfr",
+                        "-c:v",
+                        "libx264",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-preset",
+                        "ultrafast",
+                        "-tune",
+                        "fastdecode",
+                        "-threads",
+                        "0",
+                        "-crf",
+                        "28",
+                        "-movflags",
+                        "+faststart",
+                        final_video_path,
                     ],
-                    check=True
+                    check=True,
                 )
-                
+
                 # Delete original file only if we successfully created a new one and it's different
                 if final_video_path != video_path and os.path.exists(final_video_path):
                     if os.path.exists(video_path):
@@ -134,26 +156,33 @@ class ProjectFileStorageService:
         metadata = {}
         try:
             cmd = [
-                "ffprobe", "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=width,height,r_frame_rate,duration,nb_frames",
-                "-of", "json", final_video_path
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,r_frame_rate,duration,nb_frames",
+                "-of",
+                "json",
+                final_video_path,
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             data = json.loads(result.stdout)
-            
-            if data.get('streams'):
-                stream = data['streams'][0]
-                
-                fps_str = stream.get('r_frame_rate', '30/1')
-                if '/' in fps_str:
-                    num, den = map(int, fps_str.split('/'))
+
+            if data.get("streams"):
+                stream = data["streams"][0]
+
+                fps_str = stream.get("r_frame_rate", "30/1")
+                if "/" in fps_str:
+                    num, den = map(int, fps_str.split("/"))
                     fps = num / den if den != 0 else 30.0
                 else:
                     fps = float(fps_str)
-                
-                duration = float(stream.get('duration', 0))
-                total_frames = int(stream.get('nb_frames', 0))
-                
+
+                duration = float(stream.get("duration", 0))
+                total_frames = int(stream.get("nb_frames", 0))
+
                 if duration == 0 and total_frames > 0 and fps > 0:
                     duration = total_frames / fps
                 elif total_frames == 0 and duration > 0 and fps > 0:
@@ -161,27 +190,22 @@ class ProjectFileStorageService:
 
                 metadata = {
                     "fps": round(fps, 2),
-                    "width": stream.get('width'),
-                    "height": stream.get('height'),
+                    "width": stream.get("width"),
+                    "height": stream.get("height"),
                     "duration": round(duration, 2),
-                    "total_frames": total_frames
+                    "total_frames": total_frames,
                 }
         except Exception as e:
             print(f"Metadata extraction failed: {e}")
 
         return final_video_path, trk_path, metadata
 
-
     @staticmethod
     def build_stream_urls(project_id, request):
         if not request:
             return None, None
 
-        video_url = request.build_absolute_uri(
-            f"/api/v1/videos/{project_id}/project-stream/"
-        )
-        trk_url = request.build_absolute_uri(
-            f"/api/v1/videos/{project_id}/project-stream-trk/"
-        )
+        video_url = request.build_absolute_uri(f"/api/v1/videos/{project_id}/project-stream/")
+        trk_url = request.build_absolute_uri(f"/api/v1/videos/{project_id}/project-stream-trk/")
 
         return video_url, trk_url

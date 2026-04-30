@@ -1,12 +1,13 @@
-from django.test import TestCase
 from django.contrib.auth.hashers import check_password
+from django.test import TestCase
 from nose.tools import eq_, ok_
+
 from ..serializers import CreateUserSerializer
 
 
 class TestCreateUserSerializer(TestCase):
     def setUp(self):
-        self.user_data = {'username': 'test', 'password': 'test'}
+        self.user_data = {"username": "test", "password": "test"}
 
     def test_serializer_with_empty_data(self):
         serializer = CreateUserSerializer(data={})
@@ -21,4 +22,4 @@ class TestCreateUserSerializer(TestCase):
         ok_(serializer.is_valid())
 
         user = serializer.save()
-        ok_(check_password(self.user_data.get('password'), user.password))
+        ok_(check_password(self.user_data.get("password"), user.password))

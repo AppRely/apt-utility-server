@@ -1,0 +1,73 @@
+exclude: '^docs/|/migrations/|src/video/|devcontainer.json'
+default_stages: [pre-commit]
+minimum_pre_commit_version: "3.2.0"
+
+default_language_version:
+  python: python3.11
+
+repos:
+  # -------------------------
+  # 🔥 Ruff (Main Linter + Formatter)
+  # -------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        args:
+          - --fix
+          - --exit-non-zero-on-fix
+          - --select=E,W,F,N,I,UP,B,SIM,RET,ARG
+          - --ignore=E402,EM101,ARG001,ARG002,ARG004,ARG005,COM812
+          - --line-length=120
+        exclude: ^migrations/
+
+      - id: ruff-format
+        args:
+          - --line-length=120
+        exclude: ^migrations/
+
+  # -------------------------
+  # ⚡ Essential Safety Checks
+  # -------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ["--maxkb=750", "--enforce-all"]
+        exclude: ^(dummy/|.*\.min\.json$|scripts/seed/IFSC.*\.xlsx$)
+
+  # -------------------------
+  # 🚀 Code Upgrade (Optional but Useful)
+  # -------------------------
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.15.0
+    hooks:
+      - id: pyupgrade
+        args: [--py311-plus]
+
+  - repo: https://github.com/adamchainz/django-upgrade
+    rev: "1.29.1"
+    hooks:
+      - id: django-upgrade
+        args: ["--target-version", "5.2"]
+
+  # -------------------------
+  # 🧹 Cleanup (Lightweight)
+  # -------------------------
+  - repo: https://github.com/asottile/yesqa
+    rev: v1.5.0
+    hooks:
+      - id: yesqa
+
+  # -------------------------
+  # 🎯 Django Templates (Optional)
+  # -------------------------
+  - repo: https://github.com/Riverside-Healthcare/djLint
+    rev: v1.36.4
+    hooks:
+      - id: djlint-reformat-django
+        args: [--profile=django]

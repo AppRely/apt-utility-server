@@ -1,10 +1,13 @@
+import logging
 import os
 import shutil
-import logging
+
 from django.conf import settings
+
 from ..models import Project
 
 logger = logging.getLogger(__name__)
+
 
 class ProjectDeletionService:
     """

@@ -1,12 +1,12 @@
+import logging
 import os
 import shutil
-import numpy as np
-import logging
 
+import numpy as np
 from django.conf import settings
 from rest_framework.exceptions import ValidationError
 
-from ..models import Project, ActivityLog
+from ..models import ActivityLog, Project
 from ..TrkFile import Trk
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,7 @@ class TrkExportService:
         for op in ops:
             if op["type"] == "link":
                 cls._apply_link(trk, op)
-        
+
         for op in ops:
             if op["type"] == "swap":
                 cls._apply_swap(trk, op)
@@ -124,9 +124,7 @@ class TrkExportService:
         for i, f_rel in enumerate(fs):
             frame = trk.getframe(T0 + f_rel)
             if frame is not None:
-                p_dst[..., i, 0] = TrkExportService._normalize_coords(
-                    frame[..., src_idx]
-                )
+                p_dst[..., i, 0] = TrkExportService._normalize_coords(frame[..., src_idx])
 
         trk.settargetframe(p_dst, targets=[dst_idx], fs=fs)
 
@@ -150,7 +148,7 @@ class TrkExportService:
         break_rel = max(break_frame - T0, 0)
         fs = np.arange(break_rel + 1, T, dtype=np.int32)
 
-        if fs.size == 0:   # 🔑 GUARD
+        if fs.size == 0:  # 🔑 GUARD
             trk.pTrk.endframes[old_idx] = break_frame
             trk.pTrk.startframes[new_idx] = break_frame + 1
             return
@@ -160,10 +158,7 @@ class TrkExportService:
         frame = None  # 🔑 INIT
         for i, f_rel in enumerate(fs):
             frame = trk.getframe(T0 + f_rel)
-            p[..., i, 0] = (
-                np.nan if frame is None
-                else TrkExportService._normalize_coords(frame[..., old_idx])
-            )
+            p[..., i, 0] = np.nan if frame is None else TrkExportService._normalize_coords(frame[..., old_idx])
 
         trk.settargetframe(p, targets=[new_idx], fs=fs)
 
@@ -172,8 +167,6 @@ class TrkExportService:
 
         trk.pTrk.endframes[old_idx] = break_frame
         trk.pTrk.startframes[new_idx] = break_frame + 1
-
-
 
     @staticmethod
     def _apply_swap(trk, op):
@@ -186,12 +179,12 @@ class TrkExportService:
         T0, T = trk.T0, trk.T
 
         swap_start = max(op["object_1_start"], op["object_2_start"])
-        swap_end   = min(op["object_1_end"],   op["object_2_end"])
+        swap_end = min(op["object_1_end"], op["object_2_end"])
 
         start_rel = max(swap_start - T0, 0)
-        end_rel   = min(swap_end - T0 + 1, T)
+        end_rel = min(swap_end - T0 + 1, T)
 
-        if start_rel >= end_rel:   # GUARD
+        if start_rel >= end_rel:  # GUARD
             return
 
         fs = np.arange(start_rel, end_rel, dtype=np.int32)
@@ -211,7 +204,6 @@ class TrkExportService:
 
         trk.settargetframe(p1, targets=[idx1], fs=fs)
         trk.settargetframe(p2, targets=[idx2], fs=fs)
-
 
     # =====================================================
     # 🔑 FINAL INVARIANT ENFORCER (THE FIX)
@@ -277,7 +269,6 @@ class TrkExportService:
             return np.nan
         return np.squeeze(c, axis=-1) if c.ndim > 2 else c
 
-
     @staticmethod
     def _target_index(trk, obj_id):
         try:
@@ -305,51 +296,48 @@ class TrkExportService:
 
     @staticmethod
     def _next_version(path):
-        versions = [
-            int(f.split("_v")[-1].split(".trk")[0])
-            for f in os.listdir(path)
-            if f.endswith(".trk")
-        ]
+        versions = [int(f.split("_v")[-1].split(".trk")[0]) for f in os.listdir(path) if f.endswith(".trk")]
         return max(versions, default=0) + 1
 
     @staticmethod
     def _build_operations(project_id):
         ops = []
-        qs = (
-            ActivityLog.objects
-            .filter(project_id=project_id, is_applied=True)
-            .order_by("activity_created_at")
-        )
+        qs = ActivityLog.objects.filter(project_id=project_id, is_applied=True).order_by("activity_created_at")
 
         for r in qs:
             d = r.objects_data
             if r.operation == "delete":
                 ops.append({"type": "delete", "object_id": d["object_id"]})
             elif r.operation == "break_object":
-                ops.append({
-                    "type": "break",
-                    "old_object_id": d["object_id"],
-                    "new_object_id": d["new_object_id"],
-                    "break_frame": d["break_frame"],
-                })
+                ops.append(
+                    {
+                        "type": "break",
+                        "old_object_id": d["object_id"],
+                        "new_object_id": d["new_object_id"],
+                        "break_frame": d["break_frame"],
+                    }
+                )
             elif r.operation == "link":
-                ops.append({
-                    "type": "link",
-                    "src_object_id": d["object_2_id"],
-                    "dst_object_id": d["object_1_id"],
-                    "start_frame": d["object_2_start"],
-                })
+                ops.append(
+                    {
+                        "type": "link",
+                        "src_object_id": d["object_2_id"],
+                        "dst_object_id": d["object_1_id"],
+                        "start_frame": d["object_2_start"],
+                    }
+                )
 
             elif r.operation == "swap":
-                ops.append({
-                    "type": "swap",
-                    "object_1_id": d["object_1_id"],
-                    "object_2_id": d["object_2_id"],
-                    "object_1_start": d["object_1_start"],
-                    "object_1_end": d["object_1_end"],
-                    "object_2_start": d["object_2_start"],
-                    "object_2_end": d["object_2_end"],
-                })
-
+                ops.append(
+                    {
+                        "type": "swap",
+                        "object_1_id": d["object_1_id"],
+                        "object_2_id": d["object_2_id"],
+                        "object_1_start": d["object_1_start"],
+                        "object_1_end": d["object_1_end"],
+                        "object_2_start": d["object_2_start"],
+                        "object_2_end": d["object_2_end"],
+                    }
+                )
 
         return ops

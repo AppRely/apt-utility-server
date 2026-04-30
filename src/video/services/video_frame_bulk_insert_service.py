@@ -2,8 +2,8 @@
 
 from ..models import VideoFrame
 
-class VideoFrameBulkInsertService:
 
+class VideoFrameBulkInsertService:
     @staticmethod
     def insert(*, project_id, trk):
         frames = []
