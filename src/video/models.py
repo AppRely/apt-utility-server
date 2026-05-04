@@ -72,8 +72,10 @@ class FrameObject(models.Model):
     class Meta:
         db_table = "frame_object"
         indexes = [
-            models.Index(fields=["frame", "object_id", "is_active"]),
+            # models.Index(fields=["frame", "object_id", "is_active"]),
             models.Index(fields=["object_id"]),
+            models.Index(fields=["frame", "is_active"]),
+
         ]
 
     def __str__(self):

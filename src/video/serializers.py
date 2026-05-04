@@ -1,7 +1,7 @@
 import json
 
 from django.db import transaction
-from django.db.models import Exists, Max, OuterRef, Q
+from django.db.models import Exists, Max, OuterRef, Q, Min, Count, Subquery
 from rest_framework import serializers
 
 from .models import ActivityLog, FrameObject, ObjectTrack, Project
@@ -191,18 +191,57 @@ class ListUniqueIdsSerializer(serializers.Serializer):
     def get_all_ids(self):
         project_id = self.context.get("project_id")
 
-        active_with_data = (
-            ObjectTrack.objects.filter(project_id_id=project_id, object_status=1)
-            .filter(
-                Exists(FrameObject.objects.filter(object_id=OuterRef("object_id"), frame__project_id_id=project_id))
+        # 1. Aggregate FrameObject ONCE
+        frame_counts_qs = (
+            FrameObject.objects.filter(
+                frame__project_id_id=project_id,
+                is_active=True
+            )
+            .values("object_id")
+            .annotate(trk_len=Count("id"))
+        )
+
+        # Convert to dict → O(1) lookup
+        frame_count_map = {
+            row["object_id"]: row["trk_len"]
+            for row in frame_counts_qs
+        }
+
+        #2. Aggregate ObjectTrack ONCE
+        tracks_qs = (
+            ObjectTrack.objects.filter(
+                project_id_id=project_id,
+                object_status=1
+            )
+            .values("object_id")
+            .annotate(
+                start_frame=Min("start_frame"),
+                end_frame=Max("end_frame"),
             )
             .order_by("object_id")
-            .values_list("object_id", flat=True)
         )
+
+        # 3. Build final response (lightweight loop)
+        result = []
+        for row in tracks_qs:
+            object_id = row["object_id"]
+            start = row["start_frame"]
+            end = row["end_frame"]
+
+            n_frame = end - start + 1
+            trk_len = frame_count_map.get(object_id, 0)
+
+            result.append({
+                "id": object_id,
+                "start_frame": start,
+                "end_frame": end,
+                "N_frame": n_frame,
+                "trk_len": trk_len,
+            })
 
         return {
             "project_id": project_id,
-            "unique_ids": list(active_with_data),
+            "objects": result,
         }
 
 
