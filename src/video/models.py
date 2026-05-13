@@ -76,6 +76,14 @@ class FrameObject(models.Model):
             models.Index(fields=["object_id"]),
             models.Index(fields=["frame", "is_active"]),
 
+            # NEW OPTIMIZED INDEX
+            models.Index(
+                fields=[
+                    "is_active",
+                    "frame",
+                    "object_id",
+                ]
+            ),
         ]
 
     def __str__(self):

@@ -15,7 +15,7 @@ from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
 from .services.trk_export_service import TrkExportService
 from .services.undo_redo_service import UndoRedoService
-
+from .services.frame_timeline_service import FrameTimelineService
 # =============================
 # PROJECT SERIALIZERS
 # =============================
@@ -1165,3 +1165,31 @@ class TrkExportSerializer(serializers.Serializer):
 
     def export(self):
         return TrkExportService.export(project_id=self.validated_data["project_id"])
+
+
+class FrameTimelineSerializer(serializers.Serializer):
+
+    project_id = serializers.IntegerField(
+        required=True,
+        help_text="Project ID",
+    )
+
+    def validate_project_id(self, value):
+
+        if not Project.objects.filter(
+            project_id=value
+        ).exists():
+
+            raise serializers.ValidationError(
+                "Invalid project_id"
+            )
+
+        return value
+
+    def get_data(self):
+
+        data = self.validated_data
+
+        return FrameTimelineService.fetch(
+            project_id=data["project_id"]
+        )

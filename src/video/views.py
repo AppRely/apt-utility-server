@@ -36,6 +36,7 @@ from .serializers import (
     SwapObjectSerializer,
     TrkExportSerializer,
     UndoSerializer,
+    FrameTimelineSerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -43,6 +44,7 @@ from django.http import StreamingHttpResponse
 from rest_framework.decorators import action
 import mimetypes
 # Import Movie class from movies.py and Trk from TrkFile.py
+from .services.frame_timeline_service import FrameTimelineService
 
 logger = logging.getLogger(__name__)
 
@@ -1381,3 +1383,91 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        
+    # =====================================
+    ## for Time line api 
+    # =====================================
+    @swagger_auto_schema(
+        operation_description=(
+            "Return compressed timeline data "
+            "for all frames in project."
+        ),
+        responses={
+            200: "Compressed timeline payload",
+            400: "Validation error",
+            404: "Project not found",
+            500: "Server error",
+        },
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="frame-timeline",
+    )
+    def frame_timeline(self, request, pk=None):
+
+        try:
+
+            serializer = FrameTimelineSerializer(
+                data={
+                    "project_id": pk
+                }
+            )
+
+            serializer.is_valid(
+                raise_exception=True
+            )
+
+            payload = serializer.get_data()
+
+            json_data = orjson.dumps(
+                payload,
+                option=orjson.OPT_SERIALIZE_NUMPY,
+            )
+
+            compressed_data = gzip.compress(
+                json_data,
+                compresslevel=1,
+            )
+
+            response = HttpResponse(
+                compressed_data,
+                content_type="application/gzip",
+            )
+
+            response["Content-Encoding"] = "gzip"
+            response["Content-Length"] = str(
+                len(compressed_data)
+            )
+
+            return response
+
+        except serializers.ValidationError as ve:
+
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid request",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+
+            logger.error(
+                "Error fetching frame timeline",
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        "Something went wrong while "
+                        "fetching timeline data"
+                    ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
