@@ -1174,6 +1174,14 @@ class FrameTimelineSerializer(serializers.Serializer):
         help_text="Project ID",
     )
 
+    start = serializers.IntegerField(
+        required=True,
+    )
+
+    end = serializers.IntegerField(
+        required=True,
+    )
+
     def validate_project_id(self, value):
 
         if not Project.objects.filter(
@@ -1191,5 +1199,7 @@ class FrameTimelineSerializer(serializers.Serializer):
         data = self.validated_data
 
         return FrameTimelineService.fetch(
-            project_id=data["project_id"]
+            project_id=data["project_id"],
+            start=data["start"],
+            end=data["end"],
         )

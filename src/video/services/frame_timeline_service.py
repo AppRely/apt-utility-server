@@ -1,10 +1,9 @@
+# services/frame_timeline_service.py
+
 import logging
 from collections import defaultdict
 
-from ..models import (
-    FrameObject,
-    VideoFrame,
-)
+from ..models import FrameObject
 
 logger = logging.getLogger(__name__)
 
@@ -12,41 +11,36 @@ logger = logging.getLogger(__name__)
 class FrameTimelineService:
 
     @staticmethod
-    def fetch(project_id: int):
+    def fetch(
+        project_id: int,
+        start: int,
+        end: int,
+    ):
 
         try:
-
-            # frame_id -> frame_no map
-            frame_map = dict(
-                VideoFrame.objects.filter(
-                    project_id=project_id
-                ).values_list(
-                    "id",
-                    "frame_no",
-                )
-            )
 
             queryset = (
                 FrameObject.objects.filter(
                     frame__project_id=project_id,
+                    frame__frame_no__gte=start,
+                    frame__frame_no__lte=end,
                     is_active=True,
                 )
                 .values_list(
-                    "frame_id",
+                    "frame__frame_no",
                     "object_id",
                     "coordinates",
                 )
-                .iterator(chunk_size=50000)
+                .iterator(chunk_size=10000)
             )
 
             results = defaultdict(dict)
 
-            for frame_id, object_id, coordinates in queryset:
-
-                frame_no = frame_map.get(frame_id)
-
-                if frame_no is None:
-                    continue
+            for (
+                frame_no,
+                object_id,
+                coordinates,
+            ) in queryset:
 
                 results[str(frame_no)][str(object_id)] = (
                     coordinates[0]
