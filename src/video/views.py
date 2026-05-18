@@ -36,6 +36,7 @@ from .serializers import (
     SwapObjectSerializer,
     TrkExportSerializer,
     UndoSerializer,
+    ConfusionTableSerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -1378,6 +1379,106 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "status": "error",
                     "message": "Something went wrong while deleting the project",
                     "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+
+    # =====================================
+    # CONFUSION / UNCERTAINTY TABLE API
+    # =====================================
+
+    @swagger_auto_schema(
+        operation_description=(
+            "Return uncertainty/confusion table "
+            "for frame range."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                "start",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="Start frame",
+            ),
+            openapi.Parameter(
+                "end",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="End frame",
+            ),
+        ],
+        responses={
+            200: "Confusion table fetched successfully",
+            400: "Validation error",
+            500: "Server error",
+        },
+    )
+    @action( detail=True, methods=["get"], url_path="confusion-table",)
+    def confusion_table(self, request, pk=None,):
+
+        try:
+
+            start = int( request.GET.get( "start", 0,))
+            end = int(request.GET.get( "end", 300,))
+
+            serializer = (
+                ConfusionTableSerializer(
+                    data={ "video_id": pk, "start": start, "end": end,}
+                )
+            )
+
+            serializer.is_valid(
+                raise_exception=True
+            )
+
+            payload = serializer.get_data()
+
+            # json_bytes = orjson.dumps(payload)
+
+            # compressed = zlib.compress(
+            #     json_bytes,
+            #     level=6,
+            # )
+
+            # return HttpResponse(
+            #     compressed,
+            #     content_type=
+            #         "application/octet-stream",
+            # )
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except serializers.ValidationError as ve:
+
+            return Response(
+                {
+                    "status": "error",
+                    "message":
+                        "Invalid query parameters",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+
+            logger.error(
+                "Error fetching confusion table",
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "status": "error",
+                    "message":
+                        "Something went wrong while fetching confusion table",
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

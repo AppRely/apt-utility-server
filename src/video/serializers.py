@@ -16,6 +16,8 @@ from .services.snapshot_logger import SnapshotLogger
 from .services.trk_export_service import TrkExportService
 from .services.undo_redo_service import UndoRedoService
 
+
+from .services.confusion_service import ConfusionService
 # =============================
 # PROJECT SERIALIZERS
 # =============================
@@ -1165,3 +1167,76 @@ class TrkExportSerializer(serializers.Serializer):
 
     def export(self):
         return TrkExportService.export(project_id=self.validated_data["project_id"])
+
+
+
+# ==========================================
+# CONFUSION / UNCERTAINTY SERIALIZER
+# ==========================================
+class ConfusionTableSerializer(serializers.Serializer):
+
+    video_id = serializers.IntegerField(required=True, help_text="Video ID",)
+    start = serializers.IntegerField(required=True, help_text="Start frame",)
+
+    end = serializers.IntegerField(required=True, help_text="End frame",)
+
+    def validate(self, attrs):
+
+        start = attrs.get("start")
+        end = attrs.get("end")
+        video_id = attrs.get("video_id")
+
+        # -----------------------------------
+        # FRAME VALIDATION
+        # -----------------------------------
+
+        if start < 0 or end < 0:
+
+            raise serializers.ValidationError({
+                "start": "Frame number must be non-negative"
+            })
+
+        if start > end:
+
+            raise serializers.ValidationError({
+                "start": "start must be <= end"
+            })
+
+        # -----------------------------------
+        # LIMIT RANGE
+        # -----------------------------------
+
+        if end - start + 1 > 300:
+
+            raise serializers.ValidationError({
+                "end": "range cannot exceed 300 frames"
+            })
+
+        # -----------------------------------
+        # PROJECT VALIDATION
+        # -----------------------------------
+
+        if not Project.objects.filter(
+            project_id=video_id
+        ).exists():
+            raise serializers.ValidationError({"video_id": "Invalid video_id"})
+
+        return attrs
+
+    def get_data(self):
+
+        data = self.validated_data
+
+        rows = ConfusionService.fetch(
+            project_id=data["video_id"],
+            start_frame=data["start"],
+            end_frame=data["end"],
+        )
+
+        return {
+            "video_id": data["video_id"],
+            "start_frame": data["start"],
+            "end_frame": data["end"],
+            "total_rows": len(rows),
+            "rows": rows,
+        }
