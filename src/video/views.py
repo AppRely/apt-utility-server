@@ -37,6 +37,7 @@ from .serializers import (
     TrkExportSerializer,
     UndoSerializer,
     ConfusionTableSerializer,
+    FrameTimelineSerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -44,6 +45,10 @@ from django.http import StreamingHttpResponse
 from rest_framework.decorators import action
 import mimetypes
 # Import Movie class from movies.py and Trk from TrkFile.py
+from .services.frame_timeline_service import FrameTimelineService
+import zlib
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -1482,3 +1487,84 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+        
+    # =====================================
+    ## for Time line api 
+    # =====================================
+    @swagger_auto_schema(
+        operation_description=(
+            "Return compressed timeline data "
+            "for all frames in project."
+        ),
+    )
+   
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="frame-timeline",
+    )
+    def frame_timeline(
+        self,
+        request,
+        pk=None,
+    ):
+
+        try:
+
+            start = int(
+                request.GET.get(
+                    "start",
+                    0,
+                )
+            )
+
+            end = int(
+                request.GET.get(
+                    "end",
+                    500,
+                )
+            )
+
+            serializer = (
+                FrameTimelineSerializer(
+                    data={
+                        "project_id": pk,
+                        "start": start,
+                        "end": end,
+                    }
+                )
+            )
+
+            serializer.is_valid(
+                raise_exception=True
+            )
+
+            payload =serializer.get_data()
+
+            json_bytes =orjson.dumps(payload)
+
+            compressed =zlib.compress(
+                    json_bytes,
+                    level=6,
+                )
+
+            return HttpResponse(
+                compressed,
+                content_type=
+                    "application/octet-stream",
+            )
+
+        except Exception:
+
+            logger.error(
+                "Error fetching frame timeline",
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "status": "error",
+                },
+                status=500,
+            )
+

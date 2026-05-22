@@ -15,7 +15,7 @@ from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
 from .services.trk_export_service import TrkExportService
 from .services.undo_redo_service import UndoRedoService
-
+from .services.frame_timeline_service import FrameTimelineService
 
 from .services.confusion_service import ConfusionService
 # =============================
@@ -1240,3 +1240,40 @@ class ConfusionTableSerializer(serializers.Serializer):
             "total_rows": len(rows),
             "rows": rows,
         }
+
+class FrameTimelineSerializer(serializers.Serializer):
+
+    project_id = serializers.IntegerField(
+        required=True,
+        help_text="Project ID",
+    )
+
+    start = serializers.IntegerField(
+        required=True,
+    )
+
+    end = serializers.IntegerField(
+        required=True,
+    )
+
+    def validate_project_id(self, value):
+
+        if not Project.objects.filter(
+            project_id=value
+        ).exists():
+
+            raise serializers.ValidationError(
+                "Invalid project_id"
+            )
+
+        return value
+
+    def get_data(self):
+
+        data = self.validated_data
+
+        return FrameTimelineService.fetch(
+            project_id=data["project_id"],
+            start=data["start"],
+            end=data["end"],
+        )
