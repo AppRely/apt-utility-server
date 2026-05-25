@@ -9,6 +9,7 @@ from .models import (
     OperationSnapshot,
     Project,
     VideoFrame,
+    FrameConfusion,
 )
 
 
@@ -145,3 +146,87 @@ class OperationSnapshotAdmin(BaseAdmin):
     search_fields = ("activity__activity_id",)
     list_filter = ("activity__activity_id",)
     readonly_fields = ("created_at", "activity", "before_state", "after_state")
+
+@admin.register(FrameConfusion)
+class FrameConfusionAdmin(BaseAdmin):
+
+    list_display = (
+        "id",
+        "project",
+        "frame_no",
+        "next_frame_no",
+        "current_object_id",
+        "best_match_object_id",
+        "second_match_object_id",
+        "uncertainty",
+        "is_forward",
+        "best_match_cost",
+        "second_match_cost",
+        "nearby_object_count",
+        "confusion_score",
+        "is_crowded",
+        "event_type",
+        "created_at",
+        "updated_at",
+    )
+
+    # =====================================
+    # SEARCH
+    # =====================================
+
+    search_fields = (
+        "project__project_id",
+        "frame_no",
+        "current_object_id",
+        "best_match_object_id",
+        "event_type",
+    )
+
+    # =====================================
+    # FILTERS
+    # =====================================
+
+    list_filter = (
+
+        # Project filter
+        "project__project_id",
+
+        # Crowd filter
+        "is_crowded",
+
+        # Event type filter
+        "event_type",
+
+        # Direction filter
+        "is_forward",
+
+        # Time filters
+        "created_at",
+
+        # Custom numeric filters
+        "nearby_object_count",
+    )
+
+    # =====================================
+    # READ ONLY
+    # =====================================
+
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+    )
+
+    # =====================================
+    # PAGINATION
+    # =====================================
+
+    list_per_page = 100
+
+    # =====================================
+    # ORDERING
+    # =====================================
+
+    ordering = (
+        "-confusion_score",
+        "-uncertainty",
+    )

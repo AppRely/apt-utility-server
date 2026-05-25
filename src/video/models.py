@@ -146,3 +146,206 @@ class OperationSnapshot(models.Model):
 
     class Meta:
         db_table = "operation_snapshot"
+
+
+class FrameConfusion(models.Model):
+
+    id = models.BigAutoField(
+        primary_key=True
+    )
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name="frame_confusions",
+    )
+
+    # =====================================
+    # FRAME INFORMATION
+    # =====================================
+
+    # current frame (t)
+    frame_no = models.IntegerField()
+
+    # next frame (t + 1)
+    next_frame_no = models.IntegerField()
+
+    # =====================================
+    # LINKING INFORMATION
+    # =====================================
+
+    # current object id
+    current_object_id = models.IntegerField()
+
+    # best matched object
+    best_match_object_id = models.IntegerField(
+        null=True,
+        blank=True,
+    )
+
+    # second competing object
+    second_match_object_id = models.IntegerField(
+        null=True,
+        blank=True,
+    )
+
+    # =====================================
+    # MATCHING / UNCERTAINTY
+    # =====================================
+
+    # ambiguity score
+    uncertainty = models.FloatField()
+
+    # True  -> forward match won
+    # False -> backward match won
+    is_forward = models.BooleanField(
+        default=True
+    )
+
+    # best matching distance/cost
+    best_match_cost = models.FloatField(
+        null=True,
+        blank=True,
+    )
+
+    # second matching distance/cost
+    second_match_cost = models.FloatField(
+        null=True,
+        blank=True,
+    )
+
+    # =====================================
+    # CROWD / CONFUSION INFORMATION
+    # =====================================
+
+    # nearby competing objects
+    nearby_object_count = models.IntegerField(
+        default=0
+    )
+
+    # overall confusion score
+    confusion_score = models.FloatField(
+        null=True,
+        blank=True,
+    )
+
+    # crowded region flag
+    is_crowded = models.BooleanField(
+        default=False
+    )
+
+    # event category
+    # Examples:
+    # CROWD
+    # HIGH_UNCERTAINTY
+    # NORMAL
+    event_type = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+    )
+
+   
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    updated_at = models.DateTimeField(
+        auto_now=True
+    )
+
+    class Meta:
+
+        db_table = "frame_confusion"
+
+        indexes = [
+
+            models.Index(
+                fields=[
+                    "project",
+                    "frame_no",
+                ]
+            ),
+
+
+
+            models.Index(
+                fields=[
+                    "project",
+                    "uncertainty",
+                ]
+            ),
+
+           
+
+            models.Index(
+                fields=[
+                    "project",
+                    "current_object_id",
+                ]
+            ),
+
+
+
+            models.Index(
+                fields=[
+                    "project",
+                    "best_match_object_id",
+                ]
+            ),
+
+       
+            models.Index(
+                fields=[
+                    "project",
+                    "frame_no",
+                    "uncertainty",
+                ]
+            ),
+
+           
+
+            models.Index(
+                fields=[
+                    "project",
+                    "is_crowded",
+                ]
+            ),
+
+
+            models.Index(
+                fields=[
+                    "project",
+                    "event_type",
+                ]
+            ),
+
+           
+
+            models.Index(
+                fields=[
+                    "project",
+                    "confusion_score",
+                ]
+            ),
+
+
+
+            models.Index(
+                fields=[
+                    "project",
+                    "is_crowded",
+                    "confusion_score",
+                ]
+            ),
+        ]
+
+    def __str__(self):
+
+        return (
+            f"Project={self.project_id} | "
+            f"Frame={self.frame_no} | "
+            f"Object={self.current_object_id} | "
+            f"Event={self.event_type}"
+        )
