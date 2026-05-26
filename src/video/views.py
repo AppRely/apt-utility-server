@@ -1494,10 +1494,47 @@ class VideoViewSet(viewsets.ModelViewSet):
     @swagger_auto_schema(
         operation_description=(
             "Return compressed timeline data "
-            "for all frames in project."
+            "for selected objects in frame range."
         ),
+        manual_parameters=[
+            openapi.Parameter(
+                "start",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="Start frame",
+            ),
+            openapi.Parameter(
+                "end",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="End frame",
+            ),
+            openapi.Parameter(
+                "object_ids",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                required=False,
+                description=(
+                    "Comma separated object ids. "
+                    "Example: 4,2,11"
+                ),
+            ),
+            openapi.Parameter(
+                "debug",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+                description="Return readable JSON response",
+            ),
+        ],
+        responses={
+            200: "Timeline data fetched successfully",
+            400: "Validation error",
+            500: "Server error",
+        },
     )
-   
     @action(
         detail=True,
         methods=["get"],
@@ -1511,27 +1548,13 @@ class VideoViewSet(viewsets.ModelViewSet):
 
         try:
 
-            start = int(
-                request.GET.get(
-                    "start",
-                    0,
-                )
-            )
+            data = request.query_params.copy()
 
-            end = int(
-                request.GET.get(
-                    "end",
-                    500,
-                )
-            )
+            data["project_id"] = pk
 
             serializer = (
                 FrameTimelineSerializer(
-                    data={
-                        "project_id": pk,
-                        "start": start,
-                        "end": end,
-                    }
+                    data=data
                 )
             )
 
@@ -1539,19 +1562,55 @@ class VideoViewSet(viewsets.ModelViewSet):
                 raise_exception=True
             )
 
-            payload =serializer.get_data()
+            payload = serializer.get_data()
 
-            json_bytes =orjson.dumps(payload)
+            # =====================================
+            # DEBUG MODE
+            # =====================================
 
-            compressed =zlib.compress(
-                    json_bytes,
-                    level=6,
+            debug = request.GET.get(
+                "debug",
+                "false",
+            ).lower() == "true"
+
+            if debug:
+
+                return Response(
+                    {
+                        "status": "success",
+                        "data": payload,
+                    },
+                    status=status.HTTP_200_OK,
                 )
+
+            # =====================================
+            # COMPRESSED RESPONSE
+            # =====================================
+
+            json_bytes = orjson.dumps(
+                payload
+            )
+
+            compressed = zlib.compress(
+                json_bytes,
+                level=6,
+            )
 
             return HttpResponse(
                 compressed,
-                content_type=
-                    "application/octet-stream",
+                content_type="application/octet-stream",
+            )
+
+        except serializers.ValidationError as ve:
+
+            return Response(
+                {
+                    "status": "error",
+                    "message":
+                        "Invalid query parameters",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception:
@@ -1564,7 +1623,12 @@ class VideoViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     "status": "error",
+                    "message":
+                        (
+                            "Something went wrong "
+                            "while fetching timeline data"
+                        ),
                 },
-                status=500,
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

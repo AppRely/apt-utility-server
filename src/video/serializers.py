@@ -1256,17 +1256,183 @@ class FrameTimelineSerializer(serializers.Serializer):
         required=True,
     )
 
-    def validate_project_id(self, value):
+    object_ids = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
 
-        if not Project.objects.filter(
-            project_id=value
-        ).exists():
+    def validate(self, attrs):
+
+        start = attrs["start"]
+        end = attrs["end"]
+        project_id = attrs["project_id"]
+
+        # =====================================
+        # FRAME VALIDATION
+        # =====================================
+
+        if start < 0:
 
             raise serializers.ValidationError(
-                "Invalid project_id"
+                {
+                    "start":
+                        "start frame cannot be negative"
+                }
             )
 
-        return value
+        if end < 0:
+
+            raise serializers.ValidationError(
+                {
+                    "end":
+                        "end frame cannot be negative"
+                }
+            )
+
+        if start > end:
+
+            raise serializers.ValidationError(
+                {
+                    "frame_range":
+                        (
+                            "start frame cannot "
+                            "be greater than end frame"
+                        )
+                }
+            )
+
+        # =====================================
+        # PROJECT VALIDATION
+        # =====================================
+
+        project = Project.objects.filter(
+            project_id=project_id
+        ).first()
+
+        if not project:
+
+            raise serializers.ValidationError(
+                {
+                    "project_id":
+                        "Invalid project_id"
+                }
+            )
+
+        if (
+            project.total_frames is not None
+            and end > project.total_frames
+        ):
+
+            raise serializers.ValidationError(
+                {
+                    "end":
+                        (
+                            f"end frame exceeds "
+                            f"total frames "
+                            f"({project.total_frames})"
+                        )
+                }
+            )
+
+        # =====================================
+        # OBJECT IDS PARSING
+        # =====================================
+
+        raw_object_ids = attrs.get(
+            "object_ids",
+            ""
+        )
+
+        parsed_object_ids = []
+
+        if raw_object_ids:
+
+            try:
+
+                parsed_object_ids = [
+                    int(obj.strip())
+                    for obj in raw_object_ids.split(",")
+                    if obj.strip()
+                ]
+
+            except ValueError:
+
+                raise serializers.ValidationError(
+                    {
+                        "object_ids":
+                            (
+                                "object_ids must contain "
+                                "integers only"
+                            )
+                    }
+                )
+
+            # REMOVE DUPLICATES
+            parsed_object_ids = list(
+                dict.fromkeys(
+                    parsed_object_ids
+                )
+            )
+
+            # =====================================
+            # VALIDATE OBJECT IDS
+            # =====================================
+
+            existing_ids = set(
+                FrameObject.objects.filter(
+                    frame__project_id=project_id,
+                    frame__frame_no__gte=start,
+                    frame__frame_no__lte=end,
+                    object_id__in=parsed_object_ids,
+                    is_active=True,
+                ).values_list(
+                    "object_id",
+                    flat=True,
+                )
+            )
+
+            # ALL INVALID
+
+            if len(existing_ids) == 0:
+
+                raise serializers.ValidationError(
+                    {
+                        "object_ids":
+                            (
+                                "Provided object_ids "
+                                "do not exist "
+                                "in this project"
+                            )
+                    }
+                )
+
+            # PARTIAL INVALID
+
+            invalid_ids = [
+                obj_id
+                for obj_id in parsed_object_ids
+                if obj_id not in existing_ids
+            ]
+
+            if invalid_ids:
+
+                raise serializers.ValidationError(
+                    {
+                        "object_ids":
+                            (
+                                f"Invalid object_ids: "
+                                f"{invalid_ids}"
+                            )
+                    }
+                )
+
+        # STORE PARSED IDS
+
+        attrs["object_ids"] = (
+            parsed_object_ids
+        )
+
+        return attrs
 
     def get_data(self):
 
@@ -1276,4 +1442,5 @@ class FrameTimelineSerializer(serializers.Serializer):
             project_id=data["project_id"],
             start=data["start"],
             end=data["end"],
+            object_ids=data.get("object_ids"),
         )
