@@ -1,61 +1,65 @@
 # src/video/services/confusion_store_service.py
 
+import heapq
 import logging
 import numpy as np
+from django.conf import settings
 
-from ..models import (
-    FrameObject,
-    FrameConfusion,
-)
+from ..models import (FrameObject,FrameConfusion,)
 
 logger = logging.getLogger(__name__)
 
 
 class ConfusionStoreService:
 
+    # =====================================
+    # CONFIG
+    # =====================================
+
+    TOP_K = getattr(
+        settings,
+        "CONFUSION_TOP_K",
+        1000,
+    )
+
+    MIN_UNCERTAINTY = getattr(
+        settings,
+        "CONFUSION_MIN_UNCERTAINTY",
+        0.80,
+    )
+
+    SAMPLE_FRAMES = getattr(
+        settings,
+        "CONFUSION_SAMPLE_FRAMES",
+        300,
+    )
+
+    # =====================================
+    # FETCH FRAME OBJECTS
+    # =====================================
+
     @staticmethod
-    def generate(
+    def _fetch_frame_objects(
         *,
         project_id,
+        frame_no,
     ):
 
-        logger.info(
-            f"Starting confusion generation | "
-            f"project_id={project_id}"
-        )
-
-        # =====================================
-        # FETCH FRAME OBJECTS
-        # =====================================
-
-        qs = (
+        rows = (
             FrameObject.objects.filter(
                 frame__project_id_id=project_id,
+                frame__frame_no=frame_no,
                 is_active=True,
             )
-            .select_related("frame")
-            .order_by(
-                "frame__frame_no",
+            .only(
                 "object_id",
+                "coordinates",
             )
         )
 
-        logger.info(
-            f"Fetched frame objects={qs.count()}"
-        )
+        objects = []
 
-        # =====================================
-        # GROUP BY FRAME
-        # =====================================
-
-        frame_map = {}
-
-        for row in qs:
-
-            frame_no = row.frame.frame_no
-
-            if frame_no not in frame_map:
-                frame_map[frame_no] = []
+        for row in rows:
 
             coords = row.coordinates
 
@@ -64,10 +68,7 @@ class ConfusionStoreService:
 
             try:
 
-                # ---------------------------------
-                # SINGLE POINT DICT
-                # ---------------------------------
-
+                # DICT FORMAT
                 if isinstance(coords, dict):
 
                     x = coords.get("x")
@@ -107,7 +108,7 @@ class ConfusionStoreService:
                 else:
                     continue
 
-                frame_map[frame_no].append({
+                objects.append({
 
                     "object_id":
                         row.object_id,
@@ -122,8 +123,218 @@ class ConfusionStoreService:
                     f"Coordinate parse error: {e}"
                 )
 
+        return objects
+
+    # =====================================
+    # BUILD MOTION STATISTICS
+    # =====================================
+
+    @classmethod
+    def _build_motion_statistics(
+        cls,
+        *,
+        project_id,
+    ):
+
+        print(
+            f"BUILDING MOTION STATS | "
+            f"project_id={project_id}",
+            flush=True,
+        )
+
+        frame_numbers = list(
+
+            FrameObject.objects.filter(
+                frame__project_id_id=project_id,
+                is_active=True,
+            )
+            .values_list(
+                "frame__frame_no",
+                flat=True,
+            )
+            .distinct()
+            .order_by("frame__frame_no")[
+                :cls.SAMPLE_FRAMES
+            ]
+        )
+
+        all_distances = []
+
+        for frame_no in frame_numbers:
+
+            next_frame_no = frame_no + 1
+
+            current_objects = (
+                cls._fetch_frame_objects(
+                    project_id=project_id,
+                    frame_no=frame_no,
+                )
+            )
+
+            next_objects = (
+                cls._fetch_frame_objects(
+                    project_id=project_id,
+                    frame_no=next_frame_no,
+                )
+            )
+
+            if (
+                not current_objects
+                or not next_objects
+            ):
+                continue
+
+            for curr_obj in current_objects:
+
+                curr_pts = curr_obj["points"]
+
+                for next_obj in next_objects:
+
+                    next_pts = next_obj["points"]
+
+                    try:
+
+                        min_pts = min(
+                            len(curr_pts),
+                            len(next_pts),
+                        )
+
+                        curr_use = curr_pts[:min_pts]
+
+                        next_use = next_pts[:min_pts]
+
+                        # ORIGINAL FORMULA
+                        distance = (
+                            np.nanmean(
+                                np.abs(
+                                    curr_use - next_use
+                                )
+                            ) * 2
+                        )
+
+                        if np.isnan(distance):
+                            continue
+
+                        all_distances.append(
+                            float(distance)
+                        )
+
+                    except Exception:
+                        continue
+
+        # =====================================
+        # FALLBACK
+        # =====================================
+
+        if not all_distances:
+
+            print(
+                "NO MOTION STATS FOUND",
+                flush=True,
+            )
+
+            return {
+
+                "p50": 25,
+                "p75": 40,
+                "p90": 80,
+                "p95": 120,
+                "std": 10,
+            }
+
+        stats = {
+
+            "p50": float(
+                np.percentile(
+                    all_distances,
+                    50,
+                )
+            ),
+
+            "p75": float(
+                np.percentile(
+                    all_distances,
+                    75,
+                )
+            ),
+
+            "p90": float(
+                np.percentile(
+                    all_distances,
+                    90,
+                )
+            ),
+
+            "p95": float(
+                np.percentile(
+                    all_distances,
+                    95,
+                )
+            ),
+
+            "std": float(
+                np.std(all_distances)
+            ),
+        }
+
+        print(
+            f"MOTION STATS={stats}",
+            flush=True,
+        )
+
+        return stats
+
+    # =====================================
+    # MAIN GENERATOR
+    # =====================================
+
+    @classmethod
+    def generate(
+        cls,
+        *,
+        project_id,
+    ):
+
+        print(
+            f"CONFUSION STARTED | "
+            f"project_id={project_id}",
+            flush=True,
+        )
+
         logger.info(
-            f"Prepared frames={len(frame_map)}"
+            f"Starting confusion generation | "
+            f"project_id={project_id}"
+        )
+
+        stats = (
+            cls._build_motion_statistics(
+                project_id=project_id
+            )
+        )
+
+        # =====================================
+        # DYNAMIC THRESHOLDS
+        # =====================================
+
+        max_good_match_cost = (
+            stats["p75"]
+        )
+
+        distance_threshold = (
+            stats["p95"]
+        )
+
+        max_cost_gap = max(
+            stats["std"],
+            3,
+        )
+
+        print(
+            f"THRESHOLDS | "
+            f"match={max_good_match_cost} | "
+            f"distance={distance_threshold} | "
+            f"gap={max_cost_gap}",
+            flush=True,
         )
 
         # =====================================
@@ -138,52 +349,68 @@ class ConfusionStoreService:
         # GENERATE CONFUSIONS
         # =====================================
 
-        batch = []
+        frame_numbers = list(
 
-        frame_numbers = sorted(
-            frame_map.keys()
+            FrameObject.objects.filter(
+                frame__project_id_id=project_id
+            )
+            .values_list(
+                "frame__frame_no",
+                flat=True,
+            )
+            .distinct()
+            .order_by("frame__frame_no")
         )
+
+        print(
+            f"TOTAL FRAMES={len(frame_numbers)}",
+            flush=True,
+        )
+
+        top_events = []
+
+        # =====================================
+        # PROCESS FRAMES
+        # =====================================
 
         for frame_no in frame_numbers:
 
+            if frame_no % 1000 == 0:
+
+                print(
+                    f"PROCESSING FRAME={frame_no}",
+                    flush=True,
+                )
+
             next_frame_no = frame_no + 1
 
-            if next_frame_no not in frame_map:
-                continue
+            current_objects = (
+                cls._fetch_frame_objects(
+                    project_id=project_id,
+                    frame_no=frame_no,
+                )
+            )
 
-            curr_objects = frame_map[frame_no]
-            next_objects = frame_map[next_frame_no]
+            next_objects = (
+                cls._fetch_frame_objects(
+                    project_id=project_id,
+                    frame_no=next_frame_no,
+                )
+            )
 
             if (
-                len(curr_objects) == 0
-                or len(next_objects) == 0
+                not current_objects
+                or not next_objects
             ):
                 continue
 
-            logger.info(
-                f"Processing "
-                f"{frame_no} -> {next_frame_no} | "
-                f"curr={len(curr_objects)} | "
-                f"next={len(next_objects)}"
-            )
-
-            # =====================================
-            # BUILD COST MATRIX
-            # =====================================
-
-            cost_matrix = np.full(
-                (
-                    len(curr_objects),
-                    len(next_objects),
-                ),
-                np.nan,
-            )
-
-            for i, curr_obj in enumerate(curr_objects):
+            for curr_obj in current_objects:
 
                 curr_pts = curr_obj["points"]
 
-                for j, next_obj in enumerate(next_objects):
+                candidates = []
+
+                for next_obj in next_objects:
 
                     next_pts = next_obj["points"]
 
@@ -197,152 +424,135 @@ class ConfusionStoreService:
                         curr_use = curr_pts[:min_pts]
                         next_use = next_pts[:min_pts]
 
-                        # SAME FORMULA AS TRK ENGINE
+                        # ORIGINAL FORMULA
+                        distance = (
+                            np.nanmean(
+                                np.abs(
+                                    curr_use - next_use
+                                )
+                            ) * 2
+                        )
 
-                        distance = np.nanmean(
-                            np.abs(
-                                curr_use - next_use
-                            )
-                        ) * 2
+                        # DISTANCE FILTER
+                        if (
+                            distance
+                            > distance_threshold
+                        ):
+                            continue
 
-                        cost_matrix[i, j] = distance
+                        candidates.append({
+
+                            "object_id":
+                                next_obj["object_id"],
+
+                            "distance":
+                                float(distance),
+                        })
 
                     except Exception:
                         continue
 
-            # =====================================
-            # COMPUTE MATCHES
-            # =====================================
-
-            for i, curr_obj in enumerate(curr_objects):
-
-                row_costs = cost_matrix[i]
-
-                valid_next = np.where(
-                    ~np.isnan(row_costs)
-                )[0]
-
-                if len(valid_next) < 2:
+                if len(candidates) < 2:
                     continue
 
-                order_next = valid_next[
-                    np.argsort(
-                        row_costs[valid_next]
-                    )
-                ]
+                candidates.sort(
+                    key=lambda x: x["distance"]
+                )
 
-                best_idx = order_next[0]
-                second_idx = order_next[1]
+                best = candidates[0]
 
-                best_cost = row_costs[best_idx]
-                second_cost = row_costs[second_idx]
+                second = candidates[1]
+
+                best_cost = best["distance"]
+
+                second_cost = second["distance"]
 
                 if second_cost <= 0:
                     continue
 
-                # =====================================
-                # FORWARD RATIO
-                # =====================================
-
-                fwd_ratio = (
+                # UNCERTAINTY
+                uncertainty = (
                     best_cost / second_cost
                 )
 
-                # =====================================
-                # BACKWARD RATIO
-                # =====================================
-
-                bwd_ratio = np.nan
-
-                col_costs = cost_matrix[:, best_idx]
-
-                valid_curr = np.where(
-                    ~np.isnan(col_costs)
-                )[0]
-
-                if len(valid_curr) >= 2:
-
-                    order_curr = valid_curr[
-                        np.argsort(
-                            col_costs[valid_curr]
-                        )
-                    ]
-
-                    bwd_best_cost = col_costs[
-                        order_curr[0]
-                    ]
-
-                    bwd_second_cost = col_costs[
-                        order_curr[1]
-                    ]
-
-                    if bwd_second_cost > 0:
-
-                        bwd_ratio = (
-                            bwd_best_cost
-                            / bwd_second_cost
-                        )
-
-                # =====================================
-                # PICK BEST DIRECTION
-                # =====================================
-
-                use_forward = (
-                    np.isnan(bwd_ratio)
-                    or fwd_ratio <= bwd_ratio
-                )
-
-                uncertainty = (
-                    fwd_ratio
-                    if use_forward
-                    else bwd_ratio
-                )
-
-                # =====================================
-                # CROWD DETECTION
-                # =====================================
-
-                DISTANCE_THRESHOLD = 100
-
-                nearby_mask = (
-                    row_costs < DISTANCE_THRESHOLD
-                )
-
-                nearby_count = np.count_nonzero(
-                    nearby_mask
-                )
-
-                confusion_score = (
-                    uncertainty * nearby_count
-                )
-
-                is_crowded = nearby_count >= 3
-
-                # =====================================
-                # EVENT TYPE
-                # =====================================
-
-                event_type = "NORMAL"
-
-                if nearby_count >= 3:
-
-                    event_type = "CROWD"
-
-                elif uncertainty >= 0.8:
-
-                    event_type = "HIGH_UNCERTAINTY"
-
-                # =====================================
-                # STORE ONLY IMPORTANT EVENTS
-                # =====================================
-
+                # QUALITY FILTER
                 if (
-                    not is_crowded
-                    and uncertainty < 0.7
+                    best_cost
+                    > max_good_match_cost
                 ):
                     continue
 
-                batch.append(
+                # GAP FILTER
+                cost_gap = (
+                    second_cost - best_cost
+                )
+
+                if (
+                    cost_gap
+                    > max_cost_gap
+                ):
+                    continue
+
+                # UNCERTAINTY FILTER
+                if (
+                    uncertainty
+                    < cls.MIN_UNCERTAINTY
+                ):
+                    continue
+
+                nearby_count = len(candidates)
+
+                crowd_bonus = min(
+                    nearby_count / 10,
+                    1.0,
+                )
+
+                # FINAL SCORE
+                severity_score = (
+
+                    uncertainty * 0.6
+
+                    + (
+                        1
+                        - min(
+                            cost_gap / (
+                                max_cost_gap * 2
+                            ),
+                            1.0,
+                        )
+                    ) * 0.3
+
+                    + crowd_bonus * 0.1
+                )
+
+                # EVENT TYPE
+
+                if (
+                    uncertainty >= 0.90
+                    and cost_gap <= (
+                        max_cost_gap * 0.5
+                    )
+                ):
+
+                    event_type = (
+                        "ID_SWITCH_RISK"
+                    )
+
+                elif nearby_count >= 5:
+
+                    event_type = (
+                        "CROWD_OVERLAP"
+                    )
+
+                else:
+
+                    event_type = (
+                        "HIGH_UNCERTAINTY"
+                    )
+
+                event = (
+
+                    severity_score,
 
                     FrameConfusion(
 
@@ -357,15 +567,11 @@ class ConfusionStoreService:
                         ),
 
                         best_match_object_id=(
-                            next_objects[
-                                best_idx
-                            ]["object_id"]
+                            best["object_id"]
                         ),
 
                         second_match_object_id=(
-                            next_objects[
-                                second_idx
-                            ]["object_id"]
+                            second["object_id"]
                         ),
 
                         best_match_cost=float(
@@ -380,34 +586,76 @@ class ConfusionStoreService:
                             uncertainty
                         ),
 
-                        is_forward=bool(
-                            use_forward
-                        ),
-
                         nearby_object_count=(
                             nearby_count
                         ),
 
                         confusion_score=float(
-                            confusion_score
+                            severity_score
                         ),
 
-                        is_crowded=is_crowded,
+                        is_crowded=(
+                            nearby_count >= 5
+                        ),
 
                         event_type=event_type,
+
+                        is_forward=True,
                     )
                 )
 
-        # =====================================
-        # BULK INSERT
-        # =====================================
+                # TOP-K
+
+                if (
+                    len(top_events)
+                    < cls.TOP_K
+                ):
+
+                    heapq.heappush(
+                        top_events,
+                        event,
+                    )
+
+                else:
+
+                    heapq.heappushpop(
+                        top_events,
+                        event,
+                    )
+
+        print(
+            f"FINAL EVENTS={len(top_events)}",
+            flush=True,
+        )
+
+        final_batch = [
+
+            event[1]
+
+            for event in sorted(
+                top_events,
+                key=lambda x: x[0],
+                reverse=True,
+            )
+        ]
 
         FrameConfusion.objects.bulk_create(
-            batch,
-            batch_size=5000,
+            final_batch,
+            batch_size=1000,
+        )
+
+        print(
+            f"INSERTED ROWS={len(final_batch)}",
+            flush=True,
         )
 
         logger.info(
-            f"Inserted confusion rows="
-            f"{len(batch)}"
+            f"Inserted rows="
+            f"{len(final_batch)}"
+        )
+
+        print(
+            f"CONFUSION COMPLETED | "
+            f"project_id={project_id}",
+            flush=True,
         )

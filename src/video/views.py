@@ -36,7 +36,7 @@ from .serializers import (
     SwapObjectSerializer,
     TrkExportSerializer,
     UndoSerializer,
-    ConfusionTableSerializer,
+    FrameConfusionRowSerializer,
     FrameTimelineSerializer,
 )
 
@@ -47,6 +47,7 @@ import mimetypes
 # Import Movie class from movies.py and Trk from TrkFile.py
 from .services.frame_timeline_service import FrameTimelineService
 import zlib
+from .services.confusion_service import ConfusionTableService
 
 
 
@@ -1393,83 +1394,158 @@ class VideoViewSet(viewsets.ModelViewSet):
     # =====================================
     # CONFUSION / UNCERTAINTY TABLE API
     # =====================================
-
     @swagger_auto_schema(
         operation_description=(
-            "Return uncertainty/confusion table "
-            "for frame range."
+            "Return stored confusion events."
         ),
-        manual_parameters=[
-            openapi.Parameter(
-                "start",
-                openapi.IN_QUERY,
-                type=openapi.TYPE_INTEGER,
-                required=True,
-                description="Start frame",
-            ),
-            openapi.Parameter(
-                "end",
-                openapi.IN_QUERY,
-                type=openapi.TYPE_INTEGER,
-                required=True,
-                description="End frame",
-            ),
-        ],
         responses={
             200: "Confusion table fetched successfully",
             400: "Validation error",
             500: "Server error",
         },
     )
-    @action( detail=True, methods=["get"], url_path="confusion-table",)
-    def confusion_table(self, request, pk=None,):
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="confusion-table",
+    )
+
+    def confusion_table(
+        self,
+        request,
+        pk=None,
+    ):
 
         try:
 
-            start = int( request.GET.get( "start", 0,))
-            end = int(request.GET.get( "end", 300,))
+            start = request.GET.get("start")
 
-            serializer = (
-                ConfusionTableSerializer(
-                    data={ "video_id": pk, "start": start, "end": end,}
+            end = request.GET.get("end")
+
+            if start is not None:
+                start = int(start)
+
+            if end is not None:
+                end = int(end)
+
+            # =====================================
+            # VALIDATION
+            # =====================================
+
+            if (
+                start is not None
+                and start < 0
+            ):
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "Start frame must be non-negative",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if (
+                end is not None
+                and end < 0
+            ):
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "End frame must be non-negative",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if (
+                start is not None
+                and end is not None
+                and start > end
+            ):
+
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "start must be <= end",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if (
+                start is not None
+                and end is not None
+                and end - start > 5000
+            ):
+
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "Range cannot exceed 5000 frames",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not Project.objects.filter(
+                project_id=pk
+            ).exists():
+
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "Invalid project id",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # =====================================
+            # FETCH
+            # =====================================
+
+            rows = (
+                ConfusionTableService.fetch(
+                    project_id=pk,
+                    start_frame=start,
+                    end_frame=end,
+                    query_params=request.GET,
                 )
             )
 
-            serializer.is_valid(
-                raise_exception=True
-            )
+            # =====================================
+            # RESPONSE
+            # =====================================
 
-            payload = serializer.get_data()
+            payload = {
 
-            # json_bytes = orjson.dumps(payload)
+                "video_id":
+                    pk,
 
-            # compressed = zlib.compress(
-            #     json_bytes,
-            #     level=6,
-            # )
+                "start_frame":
+                    start,
 
-            # return HttpResponse(
-            #     compressed,
-            #     content_type=
-            #         "application/octet-stream",
-            # )
+                "end_frame":
+                    end,
+
+                "total_rows":
+                    len(rows),
+
+                "rows":
+                    FrameConfusionRowSerializer(
+                        rows,
+                        many=True,
+                    ).data,
+            }
+
             return Response(
                 {
                     "status": "success",
                     "data": payload,
                 },
                 status=status.HTTP_200_OK,
-            )
-        except serializers.ValidationError as ve:
-
-            return Response(
-                {
-                    "status": "error",
-                    "message":
-                        "Invalid query parameters",
-                    "errors": ve.detail,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception:
@@ -1483,7 +1559,8 @@ class VideoViewSet(viewsets.ModelViewSet):
                 {
                     "status": "error",
                     "message":
-                        "Something went wrong while fetching confusion table",
+                        "Something went wrong while "
+                        "fetching confusion table",
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

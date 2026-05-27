@@ -160,19 +160,11 @@ class FrameConfusion(models.Model):
         related_name="frame_confusions",
     )
 
-    # =====================================
-    # FRAME INFORMATION
-    # =====================================
-
     # current frame (t)
     frame_no = models.IntegerField()
 
     # next frame (t + 1)
     next_frame_no = models.IntegerField()
-
-    # =====================================
-    # LINKING INFORMATION
-    # =====================================
 
     # current object id
     current_object_id = models.IntegerField()
@@ -188,11 +180,7 @@ class FrameConfusion(models.Model):
         null=True,
         blank=True,
     )
-
-    # =====================================
-    # MATCHING / UNCERTAINTY
-    # =====================================
-
+ 
     # ambiguity score
     uncertainty = models.FloatField()
 
@@ -214,9 +202,6 @@ class FrameConfusion(models.Model):
         blank=True,
     )
 
-    # =====================================
-    # CROWD / CONFUSION INFORMATION
-    # =====================================
 
     # nearby competing objects
     nearby_object_count = models.IntegerField(
@@ -245,8 +230,6 @@ class FrameConfusion(models.Model):
         blank=True,
     )
 
-   
-
     created_at = models.DateTimeField(
         auto_now_add=True
     )
@@ -260,85 +243,10 @@ class FrameConfusion(models.Model):
         db_table = "frame_confusion"
 
         indexes = [
-
-            models.Index(
-                fields=[
-                    "project",
-                    "frame_no",
-                ]
-            ),
-
-
-
-            models.Index(
-                fields=[
-                    "project",
-                    "uncertainty",
-                ]
-            ),
-
-           
-
-            models.Index(
-                fields=[
-                    "project",
-                    "current_object_id",
-                ]
-            ),
-
-
-
-            models.Index(
-                fields=[
-                    "project",
-                    "best_match_object_id",
-                ]
-            ),
-
-       
-            models.Index(
-                fields=[
-                    "project",
-                    "frame_no",
-                    "uncertainty",
-                ]
-            ),
-
-           
-
-            models.Index(
-                fields=[
-                    "project",
-                    "is_crowded",
-                ]
-            ),
-
-
-            models.Index(
-                fields=[
-                    "project",
-                    "event_type",
-                ]
-            ),
-
-           
-
-            models.Index(
-                fields=[
-                    "project",
-                    "confusion_score",
-                ]
-            ),
-
-
-
-            models.Index(
-                fields=[
-                    "project",
-                    "is_crowded",
-                    "confusion_score",
-                ]
-            ),
+            models.Index(fields=["project", "frame_no",] ),
+            models.Index(fields=["project", "current_object_id",]),
+            models.Index(fields=["project", "event_type",]),
+            models.Index(fields=["project", "-confusion_score",] ),
         ]
 
     def __str__(self):
