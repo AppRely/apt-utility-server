@@ -4,7 +4,7 @@ from django.db import transaction
 from django.db.models import Exists, Max, OuterRef, Q, Min, Count, Subquery
 from rest_framework import serializers
 
-from .models import ActivityLog, FrameObject, ObjectTrack, Project
+from .models import ActivityLog, FrameObject, ObjectTrack, Project,FrameConfusion
 from .services.frame_info_service import FrameInfoService
 from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
 from .services.frame_object_range_service import FrameObjectRangeService
@@ -17,7 +17,7 @@ from .services.trk_export_service import TrkExportService
 from .services.undo_redo_service import UndoRedoService
 from .services.frame_timeline_service import FrameTimelineService
 
-from .services.confusion_service import ConfusionService
+from .services.confusion_service import ConfusionTableService
 # =============================
 # PROJECT SERIALIZERS
 # =============================
@@ -1167,74 +1167,29 @@ class TrkExportSerializer(serializers.Serializer):
 # ==========================================
 # CONFUSION / UNCERTAINTY SERIALIZER
 # ==========================================
-class ConfusionTableSerializer(serializers.Serializer):
+class FrameConfusionRowSerializer(serializers.ModelSerializer):
 
-    video_id = serializers.IntegerField(required=True, help_text="Video ID",)
-    start = serializers.IntegerField(required=True, help_text="Start frame",)
+    class Meta:
 
-    end = serializers.IntegerField(required=True, help_text="End frame",)
+        model = FrameConfusion
 
-    def validate(self, attrs):
-
-        start = attrs.get("start")
-        end = attrs.get("end")
-        video_id = attrs.get("video_id")
-
-        # -----------------------------------
-        # FRAME VALIDATION
-        # -----------------------------------
-
-        if start < 0 or end < 0:
-
-            raise serializers.ValidationError({
-                "start": "Frame number must be non-negative"
-            })
-
-        if start > end:
-
-            raise serializers.ValidationError({
-                "start": "start must be <= end"
-            })
-
-        # -----------------------------------
-        # LIMIT RANGE
-        # -----------------------------------
-
-        if end - start + 1 > 300:
-
-            raise serializers.ValidationError({
-                "end": "range cannot exceed 300 frames"
-            })
-
-        # -----------------------------------
-        # PROJECT VALIDATION
-        # -----------------------------------
-
-        if not Project.objects.filter(
-            project_id=video_id
-        ).exists():
-            raise serializers.ValidationError({"video_id": "Invalid video_id"})
-
-        return attrs
-
-    def get_data(self):
-
-        data = self.validated_data
-
-        rows = ConfusionService.fetch(
-            project_id=data["video_id"],
-            start_frame=data["start"],
-            end_frame=data["end"],
-        )
-
-        return {
-            "video_id": data["video_id"],
-            "start_frame": data["start"],
-            "end_frame": data["end"],
-            "total_rows": len(rows),
-            "rows": rows,
-        }
-
+        fields = [
+            "id",
+            "frame_no",
+            "next_frame_no",
+            "current_object_id",
+            "best_match_object_id",
+            "second_match_object_id",
+            "uncertainty",
+            "is_forward",
+            "best_match_cost",
+            "second_match_cost",
+            "nearby_object_count",
+            "confusion_score",
+            "is_crowded",
+            "event_type",
+            "created_at",
+        ]
 class FrameTimelineSerializer(serializers.Serializer):
 
     project_id = serializers.IntegerField(
