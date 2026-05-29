@@ -179,72 +179,66 @@ class FrameInfoSerializer(serializers.Serializer):
 
 
 class ListUniqueIdsSerializer(serializers.Serializer):
+
+    start_frame = serializers.IntegerField(required=False, min_value=0,)
+    end_frame = serializers.IntegerField(required=False, min_value=0,)
+
     def validate(self, data):
+
         project_id = self.context.get("project_id")
 
-        if not project_id:
-            raise serializers.ValidationError({"project_id": "project_id is required"})
+        if not Project.objects.filter(
+            project_id=project_id
+        ).exists():
 
-        if not Project.objects.filter(project_id=project_id).exists():
-            raise serializers.ValidationError({"project_id": "Invalid project ID"})
+            raise serializers.ValidationError(
+                {
+                    "project_id":
+                        "Invalid project ID"
+                }
+            )
+
+        start_frame = data.get(
+            "start_frame"
+        )
+
+        end_frame = data.get(
+            "end_frame"
+        )
+
+        # BOTH REQUIRED
+
+        if (
+            start_frame is not None
+            and end_frame is None
+        ) or (
+            start_frame is None
+            and end_frame is not None
+        ):
+
+            raise serializers.ValidationError(
+                (
+                    "Both start_frame and "
+                    "end_frame are required."
+                )
+            )
+
+        # RANGE VALIDATION
+
+        if (
+            start_frame is not None
+            and end_frame is not None
+            and start_frame > end_frame
+        ):
+
+            raise serializers.ValidationError(
+                (
+                    "start_frame cannot "
+                    "be greater than end_frame"
+                )
+            )
 
         return data
-
-    def get_all_ids(self):
-        project_id = self.context.get("project_id")
-
-        # 1. Aggregate FrameObject ONCE
-        frame_counts_qs = (
-            FrameObject.objects.filter(
-                frame__project_id_id=project_id,
-                is_active=True
-            )
-            .values("object_id")
-            .annotate(trk_len=Count("id"))
-        )
-
-        # Convert to dict → O(1) lookup
-        frame_count_map = {
-            row["object_id"]: row["trk_len"]
-            for row in frame_counts_qs
-        }
-
-        #2. Aggregate ObjectTrack ONCE
-        tracks_qs = (
-            ObjectTrack.objects.filter(
-                project_id_id=project_id,
-                object_status=1
-            )
-            .values("object_id")
-            .annotate(
-                start_frame=Min("start_frame"),
-                end_frame=Max("end_frame"),
-            )
-            .order_by("object_id")
-        )
-
-        # 3. Build final response (lightweight loop)
-        result = []
-        for row in tracks_qs:
-            object_id = row["object_id"]
-            start = row["start_frame"]
-            end = row["end_frame"]
-
-            n_frame = end - start + 1
-            trk_len = frame_count_map.get(object_id, 0)
-
-            result.append({
-                "id": object_id,
-                "start_frame": start,
-                "end_frame": end,
-                "N_frame": n_frame,
-                "trk_len": trk_len,
-            })
-
-        return {
-            "project_id": project_id,
-            "objects": result,
-        }
 
 
 class ObjectTrackDetailsSerializer(serializers.Serializer):

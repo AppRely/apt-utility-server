@@ -48,7 +48,7 @@ import mimetypes
 from .services.frame_timeline_service import FrameTimelineService
 import zlib
 
-
+from .services.unique_ids_service import UniqueIdsService
 
 logger = logging.getLogger(__name__)
 
@@ -587,29 +587,96 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
     @swagger_auto_schema(
-        operation_description="Get list of all unique object IDs for the project.",
-        responses={200: "List of unique IDs", 400: "Validation error", 500: "Server error"},
+        operation_description=(
+            "Get all unique object IDs for project.\n\n"
+
+            "Behavior:\n"
+            "1. Without start_frame/end_frame:\n"
+            "   - Returns all unique IDs\n"
+            "   - Returns old API response\n\n"
+
+            "2. With start_frame/end_frame:\n"
+            "   - Filters objects within range\n"
+            "   - Adds start/end coordinates"
+        ),
+
+        manual_parameters=[
+
+            openapi.Parameter(
+                "start_frame",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description=(
+                    "Optional start frame"
+                ),
+            ),
+
+            openapi.Parameter(
+                "end_frame",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description=(
+                    "Optional end frame"
+                ),
+            ),
+        ],
+
+        responses={
+            200: "Success",
+            400: "Validation error",
+            500: "Server error",
+        },
     )
-    @action(detail=True, methods=["get"], url_path="unique-ids")
-    def get_unique_ids(self, request, pk=None):
+
+    @action( detail=True, methods=["get"], url_path="unique-ids", )
+    def get_unique_ids(self, request, pk=None, ):
         """
         GET /api/v1/videos/{project_id}/unique-ids/
 
-        Retrieve all unique object IDs for a project.
-        This endpoint returns the list of distinct object identifiers
-        present in the project's tracking data.
+        Examples
+        --------
 
-        Args:
-            request (Request): Incoming HTTP request.
-            pk (int): Project identifier.
-        Returns:
-            Response: List of unique object IDs.
+        OLD BEHAVIOR:
+        /api/v1/videos/1/unique-ids/
+
+        NEW RANGE BEHAVIOR:
+        /api/v1/videos/1/unique-ids/?start_frame=100&end_frame=200
         """
-        try:
-            serializer = ListUniqueIdsSerializer(data={}, context={"project_id": pk})
-            serializer.is_valid(raise_exception=True)
 
-            payload = serializer.get_all_ids()
+        try:
+
+            serializer = (
+                ListUniqueIdsSerializer(
+                    data=request.query_params,
+                    context={
+                        "project_id": pk,
+                    },
+                )
+            )
+
+            serializer.is_valid(
+                raise_exception=True
+            )
+
+            payload = (
+                UniqueIdsService.fetch(
+
+                    project_id=pk,
+
+                    start_frame=
+                        serializer.validated_data.get(
+                            "start_frame"
+                        ),
+
+                    end_frame=
+                        serializer.validated_data.get(
+                            "end_frame"
+                        ),
+                )
+            )
+
             return Response(
                 {
                     "status": "success",
@@ -622,18 +689,30 @@ class VideoViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     "status": "error",
-                    "message": "Invalid input data",
-                    "errors": ve.detail,
+                    "message":
+                        "Invalid input data",
+
+                    "errors":
+                        ve.detail,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception:
-            logger.error("Error fetching unique object IDs", exc_info=True)
+
+            logger.error(
+                "Error fetching unique object IDs",
+                exc_info=True,
+            )
+
             return Response(
                 {
                     "status": "error",
-                    "message": "Something went wrong while fetching unique object IDs.",
+
+                    "message": (
+                        "Something went wrong while "
+                        "fetching unique object IDs."
+                    ),
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
