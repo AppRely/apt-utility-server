@@ -1,661 +1,321 @@
-# src/video/services/confusion_store_service.py
+# confusion_store_service.py
 
 import heapq
 import logging
+import traceback
+from collections import defaultdict
+
 import numpy as np
 from django.conf import settings
 
-from ..models import (FrameObject,FrameConfusion,)
+from ..models import FrameObject, FrameConfusion
 
 logger = logging.getLogger(__name__)
 
 
 class ConfusionStoreService:
 
-    # =====================================
-    # CONFIG
-    # =====================================
-
-    TOP_K = getattr(
-        settings,
-        "CONFUSION_TOP_K",
-        1000,
-    )
-
-    MIN_UNCERTAINTY = getattr(
-        settings,
-        "CONFUSION_MIN_UNCERTAINTY",
-        0.80,
-    )
-
-    SAMPLE_FRAMES = getattr(
-        settings,
-        "CONFUSION_SAMPLE_FRAMES",
-        300,
-    )
-
-    # =====================================
-    # FETCH FRAME OBJECTS
-    # =====================================
+    TOP_K = getattr(settings, "CONFUSION_TOP_K", 1000)
+    MIN_UNCERTAINTY = getattr(settings, "CONFUSION_MIN_UNCERTAINTY", 0.80)
+    SAMPLE_FRAMES = getattr(settings, "CONFUSION_SAMPLE_FRAMES", 300)
+    CROWD_THRESHOLD = 3  # lowered from 5 to work better with 10 objects/frame
 
     @staticmethod
-    def _fetch_frame_objects(
-        *,
-        project_id,
-        frame_no,
-    ):
-
+    def _fetch_frame_objects(*, project_id, frame_no):
         rows = (
             FrameObject.objects.filter(
                 frame__project_id_id=project_id,
                 frame__frame_no=frame_no,
                 is_active=True,
             )
-            .only(
-                "object_id",
-                "coordinates",
-            )
+            .only("object_id", "coordinates")
         )
 
         objects = []
 
         for row in rows:
-
             coords = row.coordinates
-
             if not coords:
                 continue
-
             try:
-
-                # DICT FORMAT
                 if isinstance(coords, dict):
-
                     x = coords.get("x")
                     y = coords.get("y")
-
                     if x is None or y is None:
                         continue
-
                     points = np.array([[x, y]])
-
-                # ---------------------------------
-                # LIST FORMAT
-                # ---------------------------------
-
                 elif isinstance(coords, list):
-
-                    # MULTI KEYPOINTS
-
-                    if (
-                        len(coords) > 0
-                        and isinstance(coords[0], list)
-                    ):
-
+                    if len(coords) > 0 and isinstance(coords[0], list):
                         points = np.array(coords)
-
-                    # SINGLE POINT
-
                     elif len(coords) >= 2:
-
-                        points = np.array([
-                            [coords[0], coords[1]]
-                        ])
-
+                        points = np.array([[coords[0], coords[1]]])
                     else:
                         continue
-
                 else:
                     continue
-
                 objects.append({
-
-                    "object_id":
-                        row.object_id,
-
-                    "points":
-                        points,
+                    "object_id": row.object_id,
+                    "points": points,
                 })
-
             except Exception as e:
-
-                logger.error(
-                    f"Coordinate parse error: {e}"
-                )
+                logger.error(f"Coordinate parse error: {e}")
 
         return objects
 
-    # =====================================
-    # BUILD MOTION STATISTICS
-    # =====================================
+    @staticmethod
+    def _load_project_objects(project_id):
+        frame_map = defaultdict(list)
 
-    @classmethod
-    def _build_motion_statistics(
-        cls,
-        *,
-        project_id,
-    ):
-
-        print(
-            f"BUILDING MOTION STATS | "
-            f"project_id={project_id}",
-            flush=True,
-        )
-
-        frame_numbers = list(
-
-            FrameObject.objects.filter(
+        rows = (
+            FrameObject.objects
+            .filter(
                 frame__project_id_id=project_id,
                 is_active=True,
             )
-            .values_list(
+            .values(
                 "frame__frame_no",
-                flat=True,
+                "object_id",
+                "coordinates",
             )
-            .distinct()
-            .order_by("frame__frame_no")[
-                :cls.SAMPLE_FRAMES
-            ]
+            .iterator(chunk_size=5000)
         )
 
-        all_distances = []
+        for row in rows:
+            coords = row["coordinates"]
+            if not coords:
+                continue
+            try:
+                if isinstance(coords, dict):
+                    x = coords.get("x")
+                    y = coords.get("y")
+                    if x is None or y is None:
+                        continue
+                    points = np.array([[x, y]])
+                elif isinstance(coords, list):
+                    if len(coords) > 0 and isinstance(coords[0], list):
+                        points = np.array(coords)
+                    elif len(coords) >= 2:
+                        points = np.array([[coords[0], coords[1]]])
+                    else:
+                        continue
+                else:
+                    continue
+                frame_map[row["frame__frame_no"]].append({
+                    "object_id": row["object_id"],
+                    "points": points,
+                })
+            except Exception:
+                continue
 
-        for frame_no in frame_numbers:
+        return frame_map
 
+    @classmethod
+    def _build_motion_statistics(cls, *, project_id):
+        """
+        Compute adaptive thresholds from a sample of consecutive frame pairs.
+        Returns a dict with p75, p95, and std of the distances.
+        """
+        frame_map = cls._load_project_objects(project_id)
+        frame_numbers = sorted(frame_map.keys())
+        if len(frame_numbers) < 2:
+            return {"p75": 5.0, "p95": 10.0, "std": 3.0}
+
+        total_frames = len(frame_numbers)
+        sample_step = max(1, total_frames // cls.SAMPLE_FRAMES)
+        sampled_indices = range(0, total_frames, sample_step)
+
+        distances = []
+
+        for idx in sampled_indices:
+            frame_no = frame_numbers[idx]
             next_frame_no = frame_no + 1
+            if next_frame_no not in frame_map:
+                continue
 
-            current_objects = (
-                cls._fetch_frame_objects(
-                    project_id=project_id,
-                    frame_no=frame_no,
-                )
-            )
+            current_objects = frame_map[frame_no]
+            next_objects = frame_map[next_frame_no]
 
-            next_objects = (
-                cls._fetch_frame_objects(
-                    project_id=project_id,
-                    frame_no=next_frame_no,
-                )
-            )
-
-            if (
-                not current_objects
-                or not next_objects
-            ):
+            if not current_objects or not next_objects:
                 continue
 
             for curr_obj in current_objects:
-
                 curr_pts = curr_obj["points"]
-
                 for next_obj in next_objects:
-
                     next_pts = next_obj["points"]
-
                     try:
-
-                        min_pts = min(
-                            len(curr_pts),
-                            len(next_pts),
-                        )
-
+                        min_pts = min(len(curr_pts), len(next_pts))
                         curr_use = curr_pts[:min_pts]
-
                         next_use = next_pts[:min_pts]
-
-                        # ORIGINAL FORMULA
-                        distance = (
-                            np.nanmean(
-                                np.abs(
-                                    curr_use - next_use
-                                )
-                            ) * 2
-                        )
-
-                        if np.isnan(distance):
-                            continue
-
-                        all_distances.append(
-                            float(distance)
-                        )
-
+                        distance = float(np.nanmean(np.abs(curr_use - next_use)) * 2)
+                        if distance >= 0:
+                            distances.append(distance)
                     except Exception:
                         continue
 
-        # =====================================
-        # FALLBACK
-        # =====================================
+        if not distances:
+            return {"p75": 5.0, "p95": 10.0, "std": 3.0}
 
-        if not all_distances:
+        distances = np.array(distances)
+        p75 = np.percentile(distances, 75)
+        p95 = np.percentile(distances, 95)
+        std = np.std(distances)
+
+        p75 = max(p75, 0.1)
+        p95 = max(p95, p75 + 0.1)
+        std = max(std, 0.5)
+
+        return {"p75": float(p75), "p95": float(p95), "std": float(std)}
+
+    @classmethod
+    def generate(cls, *, project_id):
+        try:
+            print(f"CONFUSION STARTED | project_id={project_id}", flush=True)
+
+            frame_map = cls._load_project_objects(project_id)
+            frame_numbers = sorted(frame_map.keys())
+
+            print(f"TOTAL FRAMES={len(frame_numbers)}", flush=True)
+
+            # Dynamic thresholds per project
+            stats = cls._build_motion_statistics(project_id=project_id)
+            max_good_match_cost = stats["p75"]
+            distance_threshold = stats["p95"]
+            max_cost_gap = max(stats["std"], 3.0)
 
             print(
-                "NO MOTION STATS FOUND",
+                f"THRESHOLDS | "
+                f"match={max_good_match_cost} | "
+                f"distance={distance_threshold} | "
+                f"gap={max_cost_gap}",
                 flush=True,
             )
 
-            return {
+            # Clear old confusion data
+            FrameConfusion.objects.filter(project_id=project_id).delete()
 
-                "p50": 25,
-                "p75": 40,
-                "p90": 80,
-                "p95": 120,
-                "std": 10,
-            }
+            top_events = []  # heap of (severity, frame_no, object_id, instance)
 
-        stats = {
+            for idx, frame_no in enumerate(frame_numbers):
+                if idx % 1000 == 0:
+                    print(f"PROCESSED {idx}/{len(frame_numbers)}", flush=True)
 
-            "p50": float(
-                np.percentile(
-                    all_distances,
-                    50,
-                )
-            ),
+                next_frame_no = frame_no + 1
+                current_objects = frame_map.get(frame_no, [])
+                next_objects = frame_map.get(next_frame_no, [])
 
-            "p75": float(
-                np.percentile(
-                    all_distances,
-                    75,
-                )
-            ),
+                if not current_objects or not next_objects:
+                    continue
 
-            "p90": float(
-                np.percentile(
-                    all_distances,
-                    90,
-                )
-            ),
+                for curr_obj in current_objects:
+                    curr_pts = curr_obj["points"]
+                    candidates = []
 
-            "p95": float(
-                np.percentile(
-                    all_distances,
-                    95,
-                )
-            ),
+                    for next_obj in next_objects:
+                        next_pts = next_obj["points"]
+                        try:
+                            min_pts = min(len(curr_pts), len(next_pts))
+                            curr_use = curr_pts[:min_pts]
+                            next_use = next_pts[:min_pts]
+                            distance = float(np.nanmean(np.abs(curr_use - next_use)) * 2)
 
-            "std": float(
-                np.std(all_distances)
-            ),
-        }
+                            if distance > distance_threshold:
+                                continue
 
-        print(
-            f"MOTION STATS={stats}",
-            flush=True,
-        )
-
-        return stats
-
-    # =====================================
-    # MAIN GENERATOR
-    # =====================================
-
-    @classmethod
-    def generate(
-        cls,
-        *,
-        project_id,
-    ):
-
-        print(
-            f"CONFUSION STARTED | "
-            f"project_id={project_id}",
-            flush=True,
-        )
-
-        logger.info(
-            f"Starting confusion generation | "
-            f"project_id={project_id}"
-        )
-
-        stats = (
-            cls._build_motion_statistics(
-                project_id=project_id
-            )
-        )
-
-        # =====================================
-        # DYNAMIC THRESHOLDS
-        # =====================================
-
-        max_good_match_cost = (
-            stats["p75"]
-        )
-
-        distance_threshold = (
-            stats["p95"]
-        )
-
-        max_cost_gap = max(
-            stats["std"],
-            3,
-        )
-
-        print(
-            f"THRESHOLDS | "
-            f"match={max_good_match_cost} | "
-            f"distance={distance_threshold} | "
-            f"gap={max_cost_gap}",
-            flush=True,
-        )
-
-        # =====================================
-        # DELETE OLD DATA
-        # =====================================
-
-        FrameConfusion.objects.filter(
-            project_id=project_id
-        ).delete()
-
-        # =====================================
-        # GENERATE CONFUSIONS
-        # =====================================
-
-        frame_numbers = list(
-
-            FrameObject.objects.filter(
-                frame__project_id_id=project_id
-            )
-            .values_list(
-                "frame__frame_no",
-                flat=True,
-            )
-            .distinct()
-            .order_by("frame__frame_no")
-        )
-
-        print(
-            f"TOTAL FRAMES={len(frame_numbers)}",
-            flush=True,
-        )
-
-        top_events = []
-
-        # =====================================
-        # PROCESS FRAMES
-        # =====================================
-
-        for frame_no in frame_numbers:
-
-            if frame_no % 1000 == 0:
-
-                print(
-                    f"PROCESSING FRAME={frame_no}",
-                    flush=True,
-                )
-
-            next_frame_no = frame_no + 1
-
-            current_objects = (
-                cls._fetch_frame_objects(
-                    project_id=project_id,
-                    frame_no=frame_no,
-                )
-            )
-
-            next_objects = (
-                cls._fetch_frame_objects(
-                    project_id=project_id,
-                    frame_no=next_frame_no,
-                )
-            )
-
-            if (
-                not current_objects
-                or not next_objects
-            ):
-                continue
-
-            for curr_obj in current_objects:
-
-                curr_pts = curr_obj["points"]
-
-                candidates = []
-
-                for next_obj in next_objects:
-
-                    next_pts = next_obj["points"]
-
-                    try:
-
-                        min_pts = min(
-                            len(curr_pts),
-                            len(next_pts),
-                        )
-
-                        curr_use = curr_pts[:min_pts]
-                        next_use = next_pts[:min_pts]
-
-                        # ORIGINAL FORMULA
-                        distance = (
-                            np.nanmean(
-                                np.abs(
-                                    curr_use - next_use
-                                )
-                            ) * 2
-                        )
-
-                        # DISTANCE FILTER
-                        if (
-                            distance
-                            > distance_threshold
-                        ):
+                            candidates.append({
+                                "object_id": next_obj["object_id"],
+                                "distance": distance,
+                            })
+                        except Exception:
                             continue
 
-                        candidates.append({
-
-                            "object_id":
-                                next_obj["object_id"],
-
-                            "distance":
-                                float(distance),
-                        })
-
-                    except Exception:
+                    nearby_count = len(candidates)
+                    if nearby_count < 2:
                         continue
 
-                if len(candidates) < 2:
-                    continue
+                    candidates.sort(key=lambda x: x["distance"])
+                    best = candidates[0]
+                    second = candidates[1]
 
-                candidates.sort(
-                    key=lambda x: x["distance"]
-                )
+                    best_cost = best["distance"]
+                    second_cost = second["distance"]
 
-                best = candidates[0]
+                    if second_cost <= 0:
+                        continue
+                    if best_cost > max_good_match_cost:
+                        continue
 
-                second = candidates[1]
+                    cost_gap = second_cost - best_cost
+                    if cost_gap > max_cost_gap:
+                        continue
 
-                best_cost = best["distance"]
+                    uncertainty = best_cost / second_cost
+                    if uncertainty < cls.MIN_UNCERTAINTY:
+                        continue
 
-                second_cost = second["distance"]
+                    # --- Event type classification (restored original logic) ---
+                    if uncertainty >= 0.90 and cost_gap <= (max_cost_gap * 0.5):
+                        event_type = "ID_SWITCH_RISK"
+                    elif nearby_count >= cls.CROWD_THRESHOLD:
+                        event_type = "CROWD_OVERLAP"
+                    else:
+                        event_type = "HIGH_UNCERTAINTY"
 
-                if second_cost <= 0:
-                    continue
-
-                # UNCERTAINTY
-                uncertainty = (
-                    best_cost / second_cost
-                )
-
-                # QUALITY FILTER
-                if (
-                    best_cost
-                    > max_good_match_cost
-                ):
-                    continue
-
-                # GAP FILTER
-                cost_gap = (
-                    second_cost - best_cost
-                )
-
-                if (
-                    cost_gap
-                    > max_cost_gap
-                ):
-                    continue
-
-                # UNCERTAINTY FILTER
-                if (
-                    uncertainty
-                    < cls.MIN_UNCERTAINTY
-                ):
-                    continue
-
-                nearby_count = len(candidates)
-
-                crowd_bonus = min(
-                    nearby_count / 10,
-                    1.0,
-                )
-
-                # FINAL SCORE
-                severity_score = (
-
-                    uncertainty * 0.6
-
-                    + (
-                        1
-                        - min(
-                            cost_gap / (
-                                max_cost_gap * 2
-                            ),
-                            1.0,
+                    # Debug log for crowd detection (optional)
+                    if nearby_count >= 3:
+                        print(
+                            f"CROWD DETECTED | frame={frame_no} | count={nearby_count}",
+                            flush=True,
                         )
-                    ) * 0.3
 
-                    + crowd_bonus * 0.1
-                )
-
-                # EVENT TYPE
-
-                if (
-                    uncertainty >= 0.90
-                    and cost_gap <= (
-                        max_cost_gap * 0.5
-                    )
-                ):
-
-                    event_type = (
-                        "ID_SWITCH_RISK"
+                    # --- Severity score with crowd bonus ---
+                    crowd_bonus = min(nearby_count / 10.0, 1.0)
+                    severity_score = (
+                        uncertainty * 0.6
+                        +
+                        (1 - min(cost_gap / (max_cost_gap * 2), 1.0)) * 0.3
+                        +
+                        crowd_bonus * 0.1
                     )
 
-                elif nearby_count >= 5:
-
-                    event_type = (
-                        "CROWD_OVERLAP"
+                    event = (
+                        severity_score,
+                        frame_no,
+                        curr_obj["object_id"],
+                        FrameConfusion(
+                            project_id=project_id,
+                            frame_no=frame_no,
+                            next_frame_no=next_frame_no,
+                            current_object_id=curr_obj["object_id"],
+                            best_match_object_id=best["object_id"],
+                            second_match_object_id=second["object_id"],
+                            best_match_cost=best_cost,
+                            second_match_cost=second_cost,
+                            uncertainty=uncertainty,
+                            nearby_object_count=nearby_count,
+                            confusion_score=severity_score,
+                            is_crowded=(nearby_count >= cls.CROWD_THRESHOLD),
+                            event_type=event_type,
+                            is_forward=True,
+                        )
                     )
 
-                else:
+                    # Maintain top-K heap
+                    if len(top_events) < cls.TOP_K:
+                        heapq.heappush(top_events, event)
+                    else:
+                        heapq.heappushpop(top_events, event)
 
-                    event_type = (
-                        "HIGH_UNCERTAINTY"
-                    )
+            # Build final batch sorted by severity descending
+            final_batch = [
+                event[3]
+                for event in sorted(top_events, key=lambda x: x[0], reverse=True)
+            ]
 
-                event = (
+            FrameConfusion.objects.bulk_create(final_batch, batch_size=1000)
 
-                    severity_score,
+            print(f"INSERTED ROWS={len(final_batch)}", flush=True)
+            print(f"CONFUSION COMPLETED | project_id={project_id}", flush=True)
 
-                    FrameConfusion(
-
-                        project_id=project_id,
-
-                        frame_no=frame_no,
-
-                        next_frame_no=next_frame_no,
-
-                        current_object_id=(
-                            curr_obj["object_id"]
-                        ),
-
-                        best_match_object_id=(
-                            best["object_id"]
-                        ),
-
-                        second_match_object_id=(
-                            second["object_id"]
-                        ),
-
-                        best_match_cost=float(
-                            best_cost
-                        ),
-
-                        second_match_cost=float(
-                            second_cost
-                        ),
-
-                        uncertainty=float(
-                            uncertainty
-                        ),
-
-                        nearby_object_count=(
-                            nearby_count
-                        ),
-
-                        confusion_score=float(
-                            severity_score
-                        ),
-
-                        is_crowded=(
-                            nearby_count >= 5
-                        ),
-
-                        event_type=event_type,
-
-                        is_forward=True,
-                    )
-                )
-
-                # TOP-K
-
-                if (
-                    len(top_events)
-                    < cls.TOP_K
-                ):
-
-                    heapq.heappush(
-                        top_events,
-                        event,
-                    )
-
-                else:
-
-                    heapq.heappushpop(
-                        top_events,
-                        event,
-                    )
-
-        print(
-            f"FINAL EVENTS={len(top_events)}",
-            flush=True,
-        )
-
-        final_batch = [
-
-            event[1]
-
-            for event in sorted(
-                top_events,
-                key=lambda x: x[0],
-                reverse=True,
-            )
-        ]
-
-        FrameConfusion.objects.bulk_create(
-            final_batch,
-            batch_size=1000,
-        )
-
-        print(
-            f"INSERTED ROWS={len(final_batch)}",
-            flush=True,
-        )
-
-        logger.info(
-            f"Inserted rows="
-            f"{len(final_batch)}"
-        )
-
-        print(
-            f"CONFUSION COMPLETED | "
-            f"project_id={project_id}",
-            flush=True,
-        )
+        except Exception as e:
+            print(f"CONFUSION FAILED | project_id={project_id} | {e}", flush=True)
+            traceback.print_exc()

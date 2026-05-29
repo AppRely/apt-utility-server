@@ -57,8 +57,8 @@ class ProjectUploadService:
             ObjectTrackRebuildService.rebuild(project_id=project.project_id)
 
         print(f"BEFORE THREAD SUBMIT | project_id={project.project_id}", flush=True)
-        # transaction.on_commit(lambda: executor.submit( ConfusionStoreService.generate, project_id=project.project_id, ))
-        transaction.on_commit(lambda: executor.submit(project.project_id,))
+        transaction.on_commit(lambda: executor.submit( ConfusionStoreService.generate, project_id=project.project_id, ))
+        # transaction.on_commit(lambda: executor.submit(project.project_id,))
         print(f"AFTER THREAD SUBMIT | project_id={project.project_id}", flush=True)
         # AFTER DB INSERT → store STREAM URLs
         try:
