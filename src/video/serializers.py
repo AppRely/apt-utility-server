@@ -18,6 +18,8 @@ from .services.undo_redo_service import UndoRedoService
 from .services.frame_timeline_service import FrameTimelineService
 
 from .services.confusion_service import ConfusionTableService
+from .services.trajectory_interpolation_service import TrajectoryInterpolationService
+
 # =============================
 # PROJECT SERIALIZERS
 # =============================
@@ -1392,4 +1394,85 @@ class FrameTimelineSerializer(serializers.Serializer):
             start=data["start"],
             end=data["end"],
             object_ids=data.get("object_ids"),
+        )
+
+
+
+class InterpolateTrajectorySerializer(serializers.Serializer):
+
+    source_object_id = serializers.IntegerField(
+        required=True
+    )
+
+    source_end_frame = serializers.IntegerField(
+        required=True
+    )
+
+    target_object_id = serializers.IntegerField(
+        required=True
+    )
+
+    target_start_frame = serializers.IntegerField(
+        required=True
+    )
+
+    def validate(self, data):
+
+        project_id = self.context["project_id"]
+
+        if not Project.objects.filter(
+            project_id=project_id
+        ).exists():
+            raise serializers.ValidationError(
+                "Invalid project"
+            )
+
+        if (
+            data["target_start_frame"]
+            <=
+            data["source_end_frame"]
+        ):
+            raise serializers.ValidationError(
+                "target_start_frame must be greater than source_end_frame"
+            )
+
+        source_exists = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            frame__frame_no=data["source_end_frame"],
+            object_id=data["source_object_id"],
+            is_active=True,
+        ).exists()
+
+        if not source_exists:
+            raise serializers.ValidationError(
+                {
+                    "source_object_id":
+                    "Object not found in source frame"
+                }
+            )
+
+        target_exists = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            frame__frame_no=data["target_start_frame"],
+            object_id=data["target_object_id"],
+            is_active=True,
+        ).exists()
+
+        if not target_exists:
+            raise serializers.ValidationError(
+                {
+                    "target_object_id":
+                    "Object not found in target frame"
+                }
+            )
+
+        return data
+
+    def execute(self):
+
+        return (
+            TrajectoryInterpolationService.interpolate(
+                project_id=self.context["project_id"],
+                **self.validated_data,
+            )
         )

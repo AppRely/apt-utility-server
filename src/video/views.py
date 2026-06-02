@@ -38,6 +38,7 @@ from .serializers import (
     UndoSerializer,
     FrameConfusionRowSerializer,
     FrameTimelineSerializer,
+    InterpolateTrajectorySerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -1788,3 +1789,43 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    # =====================================
+    #  Interpolate Trajectory 
+    # =====================================
+    @swagger_auto_schema(
+        method="post",
+        request_body=InterpolateTrajectorySerializer,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="interpolate-trajectory",
+    )
+    def interpolate_trajectory(
+        self,
+        request,
+        pk=None,
+    ):
+
+        serializer = (
+            InterpolateTrajectorySerializer(
+                data=request.data,
+                context={
+                    "project_id": pk
+                },
+            )
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        result = serializer.execute()
+
+        return Response(
+            {
+                "status": "success",
+                "data": result,
+            },
+            status=status.HTTP_200_OK,
+        )

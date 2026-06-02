@@ -74,7 +74,7 @@ class FrameObjectAdmin(BaseAdmin):
         "is_active",
     )
 
-    search_fields = ("frame__id", "object_id")
+    search_fields = ("frame__id", "object_id", "frame__frame_no")
     list_filter = ("frame__project_id__project_id", "object_id")
     readonly_fields = ()
 

@@ -68,7 +68,7 @@ class FrameObject(models.Model):
     tag = models.JSONField(null=True, blank=True)
     timestamp = models.JSONField(null=True, blank=True)
     is_active = models.BooleanField(default=True)  # for soft delete
-
+    is_interpolated = models.BooleanField(default=False)
     class Meta:
         db_table = "frame_object"
         indexes = [
