@@ -8,6 +8,7 @@ from ..models import (
 
 from .snapshot_builder import SnapshotBuilder
 from .snapshot_logger import SnapshotLogger
+from rest_framework.exceptions import ValidationError
 
 
 class TrajectoryInterpolationService:
@@ -27,8 +28,11 @@ class TrajectoryInterpolationService:
             !=
             len(end_coordinates)
         ):
-            raise ValueError(
-                "Coordinate count mismatch"
+            raise ValidationError(
+                {
+                    "coordinates":
+                    "Coordinate count mismatch"
+                }
             )
 
         interpolated = []
@@ -90,8 +94,10 @@ class TrajectoryInterpolationService:
         )
 
         if gap <= 0:
-            raise ValueError(
-                "No missing frames found"
+            raise ValidationError(
+                {
+                    "gap": "No missing frames found"
+                }
             )
 
         # if gap > cls.MAX_GAP:
@@ -121,10 +127,33 @@ class TrajectoryInterpolationService:
             )
         )
 
-        before_qs = FrameObject.objects.none()
+        # before_qs = FrameObject.objects.none()
 
         created_frame_ids = []
+        source_track = ObjectTrack.objects.get(
+            project_id_id=project_id,
+            object_id=source_object_id,
+        )
+        # print(
+        #     "[INTERPOLATE] DB Track BEFORE update:",
+        #     {
+        #         "track_id": source_track.track_id,
+        #         "start_frame": source_track.start_frame,
+        #         "end_frame": source_track.end_frame,
+        #     }
+        # )
+        # =====================================
+        # FREEZE BEFORE TRACK SNAPSHOT
+        # =====================================
 
+        before_track_snapshot = [
+            {
+                **ObjectTrack.objects.filter(
+                    track_id=source_track.track_id
+                ).values().first(),
+                "end_frame": source_end_frame,
+            }
+        ]
         total_steps = (
             target_start_frame
             -
@@ -144,6 +173,7 @@ class TrajectoryInterpolationService:
             exists = FrameObject.objects.filter(
                 frame=frame,
                 object_id=source_object_id,
+                is_active=True, 
             ).exists()
 
             if exists:
@@ -155,13 +185,11 @@ class TrajectoryInterpolationService:
                 source_end_frame
             )
 
-            coordinates = (
-                cls.interpolate_coordinates(
-                    source_row.coordinates,
-                    target_row.coordinates,
-                    total_steps,
-                    step,
-                )
+            coordinates = cls.interpolate_coordinates(
+                source_row.coordinates,
+                target_row.coordinates,
+                total_steps,
+                step,
             )
 
             created = FrameObject.objects.create(
@@ -175,45 +203,11 @@ class TrajectoryInterpolationService:
                 is_interpolated=True,
             )
 
-            created_frame_ids.append(
-                created.id
-            )
+            created_frame_ids.append(created.pk)
 
-        after_qs = FrameObject.objects.filter(
-            id__in=created_frame_ids
-        )
-
-        before_state = SnapshotBuilder.build(
-            before_qs_map={
-                "FrameObject": before_qs
-            },
-            after_qs_map={},
-        )
-
-        after_state = SnapshotBuilder.build(
-            before_qs_map={},
-            after_qs_map={
-                "FrameObject": after_qs
-            },
-        )
-
-        SnapshotLogger.log(
-            project_id=project_id,
-            operation="interpolate",
-            before_state=before_state,
-            after_state=after_state,
-            objects_data={
-                "source_object_id": source_object_id,
-                "source_end_frame": source_end_frame,
-                "target_object_id": target_object_id,
-                "target_start_frame": target_start_frame,
-            },
-        )
-
-        source_track = ObjectTrack.objects.get(
-            project_id_id=project_id,
-            object_id=source_object_id,
-        )
+        # =====================================
+        # UPDATE TRACK
+        # =====================================
 
         if source_object_id == target_object_id:
 
@@ -233,21 +227,92 @@ class TrajectoryInterpolationService:
             )
 
         source_track.save(
-            update_fields=[
-                "end_frame"
-            ]
+            update_fields=["end_frame"]
+        )
+        db_track = ObjectTrack.objects.get(
+            track_id=source_track.track_id
         )
 
-        return {
-            "source_object_id":
-                source_object_id,
+        # print(
+        #     "[INTERPOLATE] DB Track AFTER update:",
+        #     {
+        #         "track_id": db_track.track_id,
+        #         "start_frame": db_track.start_frame,
+        #           "end_frame": db_track.end_frame,
+        # =====================================
+        # FREEZE AFTER TRACK SNAPSHOT
+        # =====================================
 
-            "target_object_id":
-                target_object_id,
+        after_track_snapshot = list(
+            ObjectTrack.objects.filter(
+                track_id=source_track.track_id
+            ).values()
+        )
+        # print(
+        #     "[INTERPOLATE] AFTER SNAPSHOT=%s",
+        #     after_track_snapshot,
+        # )
+        # =====================================
+        # FRAMEOBJECT SNAPSHOT
+        # =====================================
 
-            "frames_created":
-                len(created_frame_ids),
+        after_qs = FrameObject.objects.filter(
+            pk__in=created_frame_ids
+        )
 
-            "updated_end_frame":
-                source_track.end_frame,
+        frame_snapshot = SnapshotBuilder.build(
+            before_qs_map={},
+            after_qs_map={
+                "FrameObject": after_qs,
+            },
+        )
+
+        # =====================================
+        # OBJECTTRACK SNAPSHOT
+        # =====================================
+
+
+
+        before_state = {
+            "ObjectTrack": {
+                "created": [],
+                "deleted": [],
+                "updated": before_track_snapshot,
+            }
         }
+
+        after_state = {
+            "FrameObject": frame_snapshot["FrameObject"],
+            "ObjectTrack": {
+                "created": [],
+                "deleted": [],
+                "updated": after_track_snapshot,
+            },
+        }
+
+        # =====================================
+        # AUDIT LOG
+        # =====================================
+        # print(
+        #     "[INTERPOLATE] BEFORE_STATE=%s",
+        #     before_state,
+        # )
+
+        # print(
+        #     "[INTERPOLATE] AFTER_STATE=%s",
+        #     after_state,
+        # )
+
+        SnapshotLogger.log(
+            project_id=project_id,
+            operation="interpolate",
+            before_state=before_state,
+            after_state=after_state,
+            objects_data={
+                "source_object_id": source_object_id,
+                "source_end_frame": source_end_frame,
+                "target_object_id": target_object_id,
+                "target_start_frame": target_start_frame,
+            },
+        )
+        return { "source_object_id": source_object_id, "target_object_id": target_object_id, "frames_created": len(created_frame_ids), "updated_end_frame": source_track.end_frame, }
