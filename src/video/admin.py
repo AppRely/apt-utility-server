@@ -24,6 +24,7 @@ class ProjectAdmin(BaseAdmin):
         "trk_file_name",
         "trk_file_path",
         "project_status",
+        "confusion_status",
         "fps",
         "width",
         "height",

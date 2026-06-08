@@ -8,7 +8,7 @@ from collections import defaultdict
 import numpy as np
 from django.conf import settings
 
-from ..models import FrameObject, FrameConfusion
+from ..models import FrameObject, FrameConfusion, Project
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,13 @@ class ConfusionStoreService:
 
     @classmethod
     def generate(cls, *, project_id):
+        project = Project.objects.get(
+        project_id=project_id
+        )
+
+        project.confusion_status = "PROCESSING"
+        project.save(update_fields=["confusion_status"])
+
         try:
             print(f"CONFUSION STARTED | project_id={project_id}", flush=True)
 
@@ -314,8 +321,12 @@ class ConfusionStoreService:
             FrameConfusion.objects.bulk_create(final_batch, batch_size=1000)
 
             print(f"INSERTED ROWS={len(final_batch)}", flush=True)
+            project.confusion_status = "COMPLETED"
+            project.save(update_fields=["confusion_status"])
             print(f"CONFUSION COMPLETED | project_id={project_id}", flush=True)
 
         except Exception as e:
+            project.confusion_status = "FAILED"
+            project.save(update_fields=["confusion_status"])
             print(f"CONFUSION FAILED | project_id={project_id} | {e}", flush=True)
             traceback.print_exc()

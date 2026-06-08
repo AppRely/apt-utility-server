@@ -32,6 +32,7 @@ class ProjectUploadService:
                 trk_file_path=trk_path,
                 project_status="inprogress",
                 status="Completed",
+                confusion_status="COMPLETED",
                 # Save Metadata
                 fps=metadata.get("fps"),
                 width=metadata.get("width"),

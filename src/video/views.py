@@ -51,7 +51,8 @@ import zlib
 from .services.confusion_service import ConfusionTableService
 
 from .services.unique_ids_service import UniqueIdsService
-
+from .services.background_executor import executor
+from .services.confusion_store_service import ConfusionStoreService
 logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 64 * 1024  # 64KB optimal chunk size
@@ -1569,9 +1570,10 @@ class VideoViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            if not Project.objects.filter(
+            project = Project.objects.filter(
                 project_id=pk
-            ).exists():
+            ).first()
+            if not project:
 
                 return Response(
                     {
@@ -1582,6 +1584,64 @@ class VideoViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            recalculate = (
+                request.GET.get(
+                    "recalculate",
+                    "false"
+                ).lower() == "true"
+            )
+
+            # =====================================
+            # RECALCULATE
+            # =====================================
+
+            if recalculate:
+
+                if project.confusion_status == "PROCESSING":
+
+                    return Response(
+                        {
+                            "status": "processing",
+                            "message":
+                                "Confusion calculation is already in progress"
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+
+                project.confusion_status = "PROCESSING"
+
+                project.save(
+                    update_fields=["confusion_status"]
+                )
+
+                executor.submit(
+                    ConfusionStoreService.generate,
+                    project_id=pk,
+                )
+
+                return Response(
+                    {
+                        "status": "success",
+                        "message":
+                            "Confusion recalculation started"
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            # =====================================
+            # TABLE OPENED WHILE PROCESSING
+            # =====================================
+
+            if project.confusion_status == "PROCESSING":
+
+                return Response(
+                    {
+                        "status": "processing",
+                        "message":
+                            "Confusion calculation is in progress"
+                    },
+                    status=status.HTTP_200_OK,
+                )
             # =====================================
             # FETCH
             # =====================================
@@ -1601,17 +1661,10 @@ class VideoViewSet(viewsets.ModelViewSet):
 
             payload = {
 
-                "video_id":
-                    pk,
-
-                "start_frame":
-                    start,
-
-                "end_frame":
-                    end,
-
-                "total_rows":
-                    len(rows),
+                "video_id":pk,
+                "start_frame":start,
+                "end_frame":end,
+                "total_rows":len(rows),
 
                 "rows":
                     FrameConfusionRowSerializer(
