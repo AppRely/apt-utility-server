@@ -1590,6 +1590,28 @@ class VideoViewSet(viewsets.ModelViewSet):
                     "false"
                 ).lower() == "true"
             )
+            
+            # =====================================
+            # STATUS CHECK
+            # =====================================
+
+            status_only = (
+                request.GET.get(
+                    "status",
+                    "false"
+                ).lower() == "true"
+            )
+
+            if status_only:
+
+                return Response(
+                    {
+                        "status": "success",
+                        "confusion_status": project.confusion_status,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
 
             # =====================================
             # RECALCULATE
