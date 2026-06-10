@@ -219,6 +219,12 @@ class FrameConfusion(models.Model):
     is_crowded = models.BooleanField(
         default=False
     )
+    nearby_object_ids = models.JSONField(
+        null=True,
+        blank=True,
+        default=list,
+        help_text="List of object IDs that are within the crowd radius"
+    )
 
     # event category
     # Examples:

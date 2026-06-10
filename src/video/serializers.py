@@ -1189,6 +1189,7 @@ class FrameConfusionRowSerializer(serializers.ModelSerializer):
             "nearby_object_count",
             "confusion_score",
             "is_crowded",
+            "nearby_object_ids",
             "event_type",
             "created_at",
         ]

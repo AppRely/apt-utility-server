@@ -50,6 +50,7 @@ class ConfusionTableService:
                 "best_match_cost",
                 "second_match_cost",
                 "nearby_object_count",
+                "nearby_object_ids",
                 "confusion_score",
                 "is_crowded",
                 "event_type",
@@ -140,14 +141,15 @@ class ConfusionTableService:
         # LIMIT
         # =====================================
 
-        limit = query_params.get(
-            "limit",
-            200,
-        )
+        # limit = query_params.get(
+        #     "limit",
+        #     200,
+        # )
 
-        limit = min(
-            max(int(limit), 1),
-            1000,
-        )
+        # limit = min(
+        #     max(int(limit), 1),
+        #     1000,
+        # )
 
-        return qs[:limit]
+        # return qs[:limit]
+        return qs

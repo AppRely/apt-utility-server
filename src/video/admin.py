@@ -165,6 +165,7 @@ class FrameConfusionAdmin(BaseAdmin):
         "second_match_cost",
         "nearby_object_count",
         "confusion_score",
+        "nearby_object_ids",
         "is_crowded",
         "event_type",
         "created_at",

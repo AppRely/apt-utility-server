@@ -16,9 +16,13 @@ logger = logging.getLogger(__name__)
 class ConfusionStoreService:
 
     TOP_K = getattr(settings, "CONFUSION_TOP_K", 1000)
+    CROWD_THRESHOLD = getattr(settings, "CONFUSION_CROWD_THRESHOLD", 3)
+    FRAME_SAMPLE_STEP = getattr(settings, "CONFUSION_FRAME_SAMPLE_STEP", 30)
+    CROWD_RADIUS = getattr(settings, "CONFUSION_CROWD_RADIUS", 80.0)
+
+    # Unused but kept for compatibility
     MIN_UNCERTAINTY = getattr(settings, "CONFUSION_MIN_UNCERTAINTY", 0.80)
     SAMPLE_FRAMES = getattr(settings, "CONFUSION_SAMPLE_FRAMES", 300)
-    CROWD_THRESHOLD = 3  # lowered from 5 to work better with 10 objects/frame
 
     @staticmethod
     def _fetch_frame_objects(*, project_id, frame_no):
@@ -111,60 +115,14 @@ class ConfusionStoreService:
 
     @classmethod
     def _build_motion_statistics(cls, *, project_id):
-        """
-        Compute adaptive thresholds from a sample of consecutive frame pairs.
-        Returns a dict with p75, p95, and std of the distances.
-        """
-        frame_map = cls._load_project_objects(project_id)
-        frame_numbers = sorted(frame_map.keys())
-        if len(frame_numbers) < 2:
-            return {"p75": 5.0, "p95": 10.0, "std": 3.0}
+        """Stub for compatibility."""
+        return {"p75": 5.0, "p95": 10.0, "std": 3.0}
 
-        total_frames = len(frame_numbers)
-        sample_step = max(1, total_frames // cls.SAMPLE_FRAMES)
-        sampled_indices = range(0, total_frames, sample_step)
-
-        distances = []
-
-        for idx in sampled_indices:
-            frame_no = frame_numbers[idx]
-            next_frame_no = frame_no + 1
-            if next_frame_no not in frame_map:
-                continue
-
-            current_objects = frame_map[frame_no]
-            next_objects = frame_map[next_frame_no]
-
-            if not current_objects or not next_objects:
-                continue
-
-            for curr_obj in current_objects:
-                curr_pts = curr_obj["points"]
-                for next_obj in next_objects:
-                    next_pts = next_obj["points"]
-                    try:
-                        min_pts = min(len(curr_pts), len(next_pts))
-                        curr_use = curr_pts[:min_pts]
-                        next_use = next_pts[:min_pts]
-                        distance = float(np.nanmean(np.abs(curr_use - next_use)) * 2)
-                        if distance >= 0:
-                            distances.append(distance)
-                    except Exception:
-                        continue
-
-        if not distances:
-            return {"p75": 5.0, "p95": 10.0, "std": 3.0}
-
-        distances = np.array(distances)
-        p75 = np.percentile(distances, 75)
-        p95 = np.percentile(distances, 95)
-        std = np.std(distances)
-
-        p75 = max(p75, 0.1)
-        p95 = max(p95, p75 + 0.1)
-        std = max(std, 0.5)
-
-        return {"p75": float(p75), "p95": float(p95), "std": float(std)}
+    @staticmethod
+    def _compute_centroid(points):
+        if len(points) == 0:
+            return None
+        return np.mean(points, axis=0)
 
     @classmethod
     def generate(cls, *, project_id):
@@ -176,157 +134,119 @@ class ConfusionStoreService:
         project.save(update_fields=["confusion_status"])
 
         try:
-            print(f"CONFUSION STARTED | project_id={project_id}", flush=True)
+            print(f"CROWD DETECTION STARTED | project_id={project_id}", flush=True)
 
             frame_map = cls._load_project_objects(project_id)
             frame_numbers = sorted(frame_map.keys())
+            print(f"TOTAL FRAMES AVAILABLE={len(frame_numbers)}", flush=True)
 
-            print(f"TOTAL FRAMES={len(frame_numbers)}", flush=True)
-
-            # Dynamic thresholds per project
-            stats = cls._build_motion_statistics(project_id=project_id)
-            max_good_match_cost = stats["p75"]
-            distance_threshold = stats["p95"]
-            max_cost_gap = max(stats["std"], 3.0)
-
-            print(
-                f"THRESHOLDS | "
-                f"match={max_good_match_cost} | "
-                f"distance={distance_threshold} | "
-                f"gap={max_cost_gap}",
-                flush=True,
-            )
+            sampled_frames = frame_numbers[::cls.FRAME_SAMPLE_STEP]
+            print(f"SAMPLED FRAMES={len(sampled_frames)} (every {cls.FRAME_SAMPLE_STEP} frames)", flush=True)
 
             # Clear old confusion data
             FrameConfusion.objects.filter(project_id=project_id).delete()
 
-            top_events = []  # heap of (severity, frame_no, object_id, instance)
+            top_events = []  # heap of (-crowd_score, frame_no, main_obj_id, instance)
 
-            for idx, frame_no in enumerate(frame_numbers):
-                if idx % 1000 == 0:
-                    print(f"PROCESSED {idx}/{len(frame_numbers)}", flush=True)
-
-                next_frame_no = frame_no + 1
-                current_objects = frame_map.get(frame_no, [])
-                next_objects = frame_map.get(next_frame_no, [])
-
-                if not current_objects or not next_objects:
+            for frame_no in sampled_frames:
+                objects = frame_map.get(frame_no, [])
+                if len(objects) < cls.CROWD_THRESHOLD:
                     continue
 
-                for curr_obj in current_objects:
-                    curr_pts = curr_obj["points"]
-                    candidates = []
+                # Compute centroids
+                obj_data = []
+                for obj in objects:
+                    pts = obj["points"]
+                    if pts is None or len(pts) == 0:
+                        continue
+                    centroid = cls._compute_centroid(pts)
+                    if centroid is not None:
+                        obj_data.append((obj["object_id"], centroid))
 
-                    for next_obj in next_objects:
-                        next_pts = next_obj["points"]
-                        try:
-                            min_pts = min(len(curr_pts), len(next_pts))
-                            curr_use = curr_pts[:min_pts]
-                            next_use = next_pts[:min_pts]
-                            distance = float(np.nanmean(np.abs(curr_use - next_use)) * 2)
+                if len(obj_data) < cls.CROWD_THRESHOLD:
+                    continue
 
-                            if distance > distance_threshold:
-                                continue
-
-                            candidates.append({
-                                "object_id": next_obj["object_id"],
-                                "distance": distance,
-                            })
-                        except Exception:
+                # Find neighbours within radius
+                neighbour_lists = {}
+                neighbour_counts = {}
+                for i, (id_i, pos_i) in enumerate(obj_data):
+                    neighbours = []
+                    for j, (id_j, pos_j) in enumerate(obj_data):
+                        if i == j:
                             continue
+                        if np.linalg.norm(pos_i - pos_j) <= cls.CROWD_RADIUS:
+                            neighbours.append(id_j)
+                    neighbour_lists[id_i] = neighbours
+                    neighbour_counts[id_i] = len(neighbours)
 
-                    nearby_count = len(candidates)
-                    if nearby_count < 2:
-                        continue
+                if not neighbour_counts:
+                    continue
 
-                    candidates.sort(key=lambda x: x["distance"])
-                    best = candidates[0]
-                    second = candidates[1]
+                # Main object = one with most neighbours
+                main_obj_id = max(neighbour_counts, key=neighbour_counts.get)
+                nearby_count = neighbour_counts[main_obj_id]
+                nearby_ids = neighbour_lists[main_obj_id]
 
-                    best_cost = best["distance"]
-                    second_cost = second["distance"]
+                if nearby_count < cls.CROWD_THRESHOLD - 1:
+                    continue
 
-                    if second_cost <= 0:
-                        continue
-                    if best_cost > max_good_match_cost:
-                        continue
+                # Compute crowd density score
+                main_centroid = next(c for (oid, c) in obj_data if oid == main_obj_id)
+                if nearby_count > 0:
+                    distances = []
+                    for nid in nearby_ids:
+                        n_centroid = next(c for (oid, c) in obj_data if oid == nid)
+                        distances.append(np.linalg.norm(main_centroid - n_centroid))
+                    mean_dist = np.mean(distances)
+                    neighbour_ratio = nearby_count / (cls.CROWD_THRESHOLD - 1)
+                    proximity = max(0.0, 1.0 - (mean_dist / cls.CROWD_RADIUS))
+                    crowd_score = min(neighbour_ratio * proximity, 1.0)
+                else:
+                    crowd_score = 0.0
 
-                    cost_gap = second_cost - best_cost
-                    if cost_gap > max_cost_gap:
-                        continue
+                # Create FrameConfusion record (repurposed fields)
+                event = FrameConfusion(
+                    project_id=project_id,
+                    frame_no=frame_no,
+                    next_frame_no=frame_no,   # unused
+                    current_object_id=main_obj_id,
+                    best_match_object_id=None,
+                    second_match_object_id=None,
+                    best_match_cost=0.0,
+                    second_match_cost=0.0,
+                    uncertainty=0.0,
+                    nearby_object_count=nearby_count,
+                    nearby_object_ids=nearby_ids,          # <-- store the list
+                    confusion_score=crowd_score,
+                    is_crowded=True,
+                    event_type="CROWD",
+                    is_forward=True,
+                )
 
-                    uncertainty = best_cost / second_cost
-                    if uncertainty < cls.MIN_UNCERTAINTY:
-                        continue
+                # Maintain top-K heap (by crowd_score)
+                if len(top_events) < cls.TOP_K:
+                    heapq.heappush(top_events, (-crowd_score, frame_no, main_obj_id, event))
+                else:
+                    heapq.heappushpop(top_events, (-crowd_score, frame_no, main_obj_id, event))
 
-                    # --- Event type classification (restored original logic) ---
-                    if uncertainty >= 0.90 and cost_gap <= (max_cost_gap * 0.5):
-                        event_type = "ID_SWITCH_RISK"
-                    elif nearby_count >= cls.CROWD_THRESHOLD:
-                        event_type = "CROWD_OVERLAP"
-                    else:
-                        event_type = "HIGH_UNCERTAINTY"
-
-                    # Debug log for crowd detection (optional)
-                    if nearby_count >= 3:
-                        print(
-                            f"CROWD DETECTED | frame={frame_no} | count={nearby_count}",
-                            flush=True,
-                        )
-
-                    # --- Severity score with crowd bonus ---
-                    crowd_bonus = min(nearby_count / 10.0, 1.0)
-                    severity_score = (
-                        uncertainty * 0.6
-                        +
-                        (1 - min(cost_gap / (max_cost_gap * 2), 1.0)) * 0.3
-                        +
-                        crowd_bonus * 0.1
-                    )
-
-                    event = (
-                        severity_score,
-                        frame_no,
-                        curr_obj["object_id"],
-                        FrameConfusion(
-                            project_id=project_id,
-                            frame_no=frame_no,
-                            next_frame_no=next_frame_no,
-                            current_object_id=curr_obj["object_id"],
-                            best_match_object_id=best["object_id"],
-                            second_match_object_id=second["object_id"],
-                            best_match_cost=best_cost,
-                            second_match_cost=second_cost,
-                            uncertainty=uncertainty,
-                            nearby_object_count=nearby_count,
-                            confusion_score=severity_score,
-                            is_crowded=(nearby_count >= cls.CROWD_THRESHOLD),
-                            event_type=event_type,
-                            is_forward=True,
-                        )
-                    )
-
-                    # Maintain top-K heap
-                    if len(top_events) < cls.TOP_K:
-                        heapq.heappush(top_events, event)
-                    else:
-                        heapq.heappushpop(top_events, event)
-
-            # Build final batch sorted by severity descending
-            final_batch = [
-                event[3]
-                for event in sorted(top_events, key=lambda x: x[0], reverse=True)
-            ]
-
+            # Bulk create
+            final_batch = [ev[3] for ev in top_events]
             FrameConfusion.objects.bulk_create(final_batch, batch_size=1000)
 
-            print(f"INSERTED ROWS={len(final_batch)}", flush=True)
+            print(f"INSERTED CROWD EVENTS = {len(final_batch)}", flush=True)
             project.confusion_status = "COMPLETED"
             project.save(update_fields=["confusion_status"])
-            print(f"CONFUSION COMPLETED | project_id={project_id}", flush=True)
+            print(f"CROWD DETECTION COMPLETED | project_id={project_id}", flush=True)
+
+            return {
+                "status": "success",
+                "project_id": project_id,
+                "crowd_events_stored": len(final_batch),
+            }
 
         except Exception as e:
             project.confusion_status = "FAILED"
             project.save(update_fields=["confusion_status"])
             print(f"CONFUSION FAILED | project_id={project_id} | {e}", flush=True)
             traceback.print_exc()
+            raise
