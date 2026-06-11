@@ -79,12 +79,86 @@ class TrajectoryInterpolationService:
         cls,
         *,
         project_id,
-        source_object_id,
-        source_end_frame,
-        target_object_id,
-        target_start_frame,
+        source_object_id=None,
+        source_end_frame=None,
+        target_object_id=None,
+        target_start_frame=None,
+        object_id=None,
+        start_frame=None,
+        end_frame=None,
+        update_track=True,
     ):
+        if (
+            object_id is not None
+            and start_frame is not None
+            and end_frame is not None
+        ):
 
+            rows = (
+                FrameObject.objects
+                .filter(
+                    frame__project_id_id=project_id,
+                    object_id=object_id,
+                    is_active=True,
+                    frame__frame_no__gte=start_frame,
+                    frame__frame_no__lte=end_frame,
+                )
+                .select_related("frame")
+                .order_by("frame__frame_no")
+            )
+            print("ROWS COUNT =", rows.count())
+            gaps = []
+
+            previous_row = None
+
+            for row in rows:
+
+                if (
+                    previous_row
+                    and
+                    row.frame.frame_no
+                    - previous_row.frame.frame_no
+                    > 1
+                ):
+
+                    gaps.append(
+                        (
+                            previous_row.frame.frame_no,
+                            row.frame.frame_no,
+                        )
+                    )
+
+                previous_row = row
+            print("GAPS =", gaps)
+            if not gaps:
+
+                return {
+                    "interpolation_required": False,
+                    "message": "No missing frames found in range",
+                    "frames_created": 0,
+                }
+
+            results = []
+
+            for source_frame, target_frame in gaps:
+
+                result = cls.interpolate(
+                    project_id=project_id,
+                    source_object_id=object_id,
+                    source_end_frame=source_frame,
+                    target_object_id=object_id,
+                    target_start_frame=target_frame,
+                    update_track=False,
+                )
+
+                results.append(result)
+
+            return {
+                "object_id": object_id,
+                "gaps_found": len(gaps),
+                "results": results,
+            }
+        
         gap = (
             target_start_frame
             -
@@ -146,14 +220,11 @@ class TrajectoryInterpolationService:
         # FREEZE BEFORE TRACK SNAPSHOT
         # =====================================
 
-        before_track_snapshot = [
-            {
-                **ObjectTrack.objects.filter(
-                    track_id=source_track.track_id
-                ).values().first(),
-                "end_frame": source_end_frame,
-            }
-        ]
+        before_track_snapshot = list(
+            ObjectTrack.objects.filter(
+                track_id=source_track.track_id
+            ).values()
+        )
         total_steps = (
             target_start_frame
             -
@@ -202,33 +273,40 @@ class TrajectoryInterpolationService:
                 is_active=True,
                 is_interpolated=True,
             )
+            print(
+                "CREATED",
+                frame_no,
+                source_object_id,
+            )
 
             created_frame_ids.append(created.pk)
 
         # =====================================
         # UPDATE TRACK
         # =====================================
+        if update_track:
 
-        if source_object_id == target_object_id:
+            if source_object_id == target_object_id:
 
-            target_track = ObjectTrack.objects.get(
-                project_id_id=project_id,
-                object_id=target_object_id,
-            )
+                target_track = ObjectTrack.objects.get(
+                    project_id_id=project_id,
+                    object_id=target_object_id,
+                )
 
-            source_track.end_frame = (
-                target_track.end_frame
-            )
+                source_track.end_frame = (
+                    target_track.end_frame
+                )
 
-        else:
+            else:
 
-            source_track.end_frame = (
-                target_start_frame - 1
-            )
+                source_track.end_frame = (
+                    target_start_frame - 1
+                )
 
-        source_track.save(
-            update_fields=["end_frame"]
-        )
+            source_track.save(
+                update_fields=["end_frame"]
+            )        
+        
         db_track = ObjectTrack.objects.get(
             track_id=source_track.track_id
         )

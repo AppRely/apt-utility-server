@@ -1401,21 +1401,13 @@ class FrameTimelineSerializer(serializers.Serializer):
 
 class InterpolateTrajectorySerializer(serializers.Serializer):
 
-    source_object_id = serializers.IntegerField(
-        required=True
-    )
-
-    source_end_frame = serializers.IntegerField(
-        required=True
-    )
-
-    target_object_id = serializers.IntegerField(
-        required=True
-    )
-
-    target_start_frame = serializers.IntegerField(
-        required=True
-    )
+    source_object_id = serializers.IntegerField(required=False)
+    source_end_frame = serializers.IntegerField(required=False)
+    target_object_id = serializers.IntegerField(required=False)
+    target_start_frame = serializers.IntegerField(required=False)
+    object_id = serializers.IntegerField(required=False)
+    start_frame = serializers.IntegerField(required=False)
+    end_frame = serializers.IntegerField(required=False)
 
     def validate(self, data):
 
@@ -1427,6 +1419,30 @@ class InterpolateTrajectorySerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "Invalid project"
             )
+        if (
+            data.get("object_id") is not None
+            and data.get("start_frame") is not None
+            and data.get("end_frame") is not None
+        ):
+
+            object_exists = ObjectTrack.objects.filter(
+                project_id_id=project_id,
+                object_id=data["object_id"],
+            ).exists()
+
+            if not object_exists:
+                raise serializers.ValidationError(
+                    {
+                        "object_id": "Object does not exist"
+                    }
+                )
+
+            if data["end_frame"] <= data["start_frame"]:
+                raise serializers.ValidationError(
+                    "end_frame must be greater than start_frame"
+                )
+
+            return data
 
         if (
             data["target_start_frame"]
