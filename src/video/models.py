@@ -264,3 +264,28 @@ class FrameConfusion(models.Model):
             f"Object={self.current_object_id} | "
             f"Event={self.event_type}"
         )
+
+
+
+class ObjectLinkingSuggestion(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="linking_suggestions")
+    source_track = models.ForeignKey('ObjectTrack', on_delete=models.CASCADE, related_name="as_source")
+    source_end_frame = models.IntegerField()
+    target_track = models.ForeignKey('ObjectTrack', on_delete=models.CASCADE, related_name="as_target")
+    target_start_frame = models.IntegerField()
+    distance = models.FloatField()
+    match_score = models.FloatField()
+    is_best_match = models.BooleanField(default=False)
+    rank = models.IntegerField(null=True, blank=True)
+    uncertainty = models.FloatField(null=True, blank=True)
+    confusion_score = models.FloatField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "object_linking_suggestion"
+        indexes = [
+            models.Index(fields=["project", "source_track"]),
+            models.Index(fields=["project", "target_track"]),
+            models.Index(fields=["source_track", "is_best_match"]),
+        ]

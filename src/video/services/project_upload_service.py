@@ -13,6 +13,7 @@ from .video_frame_bulk_insert_service import VideoFrameBulkInsertService
 
 from .background_executor import executor
 from .confusion_store_service import ConfusionStoreService
+from .object_linking_suggestion_service import ObjectLinkingService
 
 
 class ProjectUploadService:
@@ -60,6 +61,8 @@ class ProjectUploadService:
         print(f"BEFORE THREAD SUBMIT | project_id={project.project_id}", flush=True)
         transaction.on_commit(lambda: executor.submit( ConfusionStoreService.generate, project_id=project.project_id, ))
         # transaction.on_commit(lambda: executor.submit(project.project_id,))
+
+        transaction.on_commit(lambda: executor.submit(ObjectLinkingService.generate, project_id=project.project_id,))
         print(f"AFTER THREAD SUBMIT | project_id={project.project_id}", flush=True)
         # AFTER DB INSERT → store STREAM URLs
         try:

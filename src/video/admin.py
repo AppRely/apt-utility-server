@@ -10,6 +10,7 @@ from .models import (
     Project,
     VideoFrame,
     FrameConfusion,
+    ObjectLinkingSuggestion,
 )
 
 
@@ -232,3 +233,34 @@ class FrameConfusionAdmin(BaseAdmin):
         "-confusion_score",
         "-uncertainty",
     )
+
+@admin.register(ObjectLinkingSuggestion)
+class ObjectLinkingSuggestionAdmin(BaseAdmin):
+
+    list_display = (
+        "id",
+        "project",
+        "source_track",
+        "target_track",
+        "source_end_frame",
+        "target_start_frame",
+        "distance",
+        "match_score",
+        "uncertainty",
+        "confusion_score",
+        "is_best_match",
+        "rank",
+    )
+
+    search_fields = (
+        "project__project_id",
+        "source_track__object_id",
+        "target_track__object_id",
+    )
+
+    list_filter = (
+        "project__project_id",
+        "is_best_match",
+    )
+    
+    readonly_fields = ("created_at",)
