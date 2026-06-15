@@ -9,6 +9,8 @@ from .models import (
     OperationSnapshot,
     Project,
     VideoFrame,
+    FrameConfusion,
+    ObjectLinkingSuggestion,
 )
 
 
@@ -23,6 +25,7 @@ class ProjectAdmin(BaseAdmin):
         "trk_file_name",
         "trk_file_path",
         "project_status",
+        "confusion_status",
         "fps",
         "width",
         "height",
@@ -73,7 +76,7 @@ class FrameObjectAdmin(BaseAdmin):
         "is_active",
     )
 
-    search_fields = ("frame__id", "object_id")
+    search_fields = ("frame__id", "object_id", "frame__frame_no")
     list_filter = ("frame__project_id__project_id", "object_id")
     readonly_fields = ()
 
@@ -145,3 +148,119 @@ class OperationSnapshotAdmin(BaseAdmin):
     search_fields = ("activity__activity_id",)
     list_filter = ("activity__activity_id",)
     readonly_fields = ("created_at", "activity", "before_state", "after_state")
+
+@admin.register(FrameConfusion)
+class FrameConfusionAdmin(BaseAdmin):
+
+    list_display = (
+        "id",
+        "project",
+        "frame_no",
+        "next_frame_no",
+        "current_object_id",
+        "best_match_object_id",
+        "second_match_object_id",
+        "uncertainty",
+        "is_forward",
+        "best_match_cost",
+        "second_match_cost",
+        "nearby_object_count",
+        "confusion_score",
+        "nearby_object_ids",
+        "is_crowded",
+        "event_type",
+        "created_at",
+        "updated_at",
+    )
+
+    # =====================================
+    # SEARCH
+    # =====================================
+
+    search_fields = (
+        "project__project_id",
+        "frame_no",
+        "current_object_id",
+        "best_match_object_id",
+        "event_type",
+    )
+
+    # =====================================
+    # FILTERS
+    # =====================================
+
+    list_filter = (
+
+        # Project filter
+        "project__project_id",
+
+        # Crowd filter
+        "is_crowded",
+
+        # Event type filter
+        "event_type",
+
+        # Direction filter
+        "is_forward",
+
+        # Time filters
+        "created_at",
+
+        # Custom numeric filters
+        "nearby_object_count",
+    )
+
+    # =====================================
+    # READ ONLY
+    # =====================================
+
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+    )
+
+    # =====================================
+    # PAGINATION
+    # =====================================
+
+    list_per_page = 100
+
+    # =====================================
+    # ORDERING
+    # =====================================
+
+    ordering = (
+        "-confusion_score",
+        "-uncertainty",
+    )
+
+@admin.register(ObjectLinkingSuggestion)
+class ObjectLinkingSuggestionAdmin(BaseAdmin):
+
+    list_display = (
+        "id",
+        "project",
+        "source_track",
+        "target_track",
+        "source_end_frame",
+        "target_start_frame",
+        "distance",
+        "match_score",
+        "uncertainty",
+        "confusion_score",
+        "is_best_match",
+        "rank",
+    )
+
+    search_fields = (
+        "project__project_id",
+        "source_track__object_id",
+        "target_track__object_id",
+    )
+
+    list_filter = (
+        "project__project_id",
+        "is_best_match",
+    )
+    
+    readonly_fields = ("created_at",)

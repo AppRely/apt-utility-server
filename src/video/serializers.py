@@ -4,7 +4,7 @@ from django.db import transaction
 from django.db.models import Exists, Max, OuterRef, Q, Min, Count, Subquery
 from rest_framework import serializers
 
-from .models import ActivityLog, FrameObject, ObjectTrack, Project
+from .models import ActivityLog, FrameObject, ObjectTrack, Project,FrameConfusion
 from .services.frame_info_service import FrameInfoService
 from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
 from .services.frame_object_range_service import FrameObjectRangeService
@@ -15,6 +15,10 @@ from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
 from .services.trk_export_service import TrkExportService
 from .services.undo_redo_service import UndoRedoService
+from .services.frame_timeline_service import FrameTimelineService
+
+from .services.confusion_service import ConfusionTableService
+from .services.trajectory_interpolation_service import TrajectoryInterpolationService
 
 # =============================
 # PROJECT SERIALIZERS
@@ -177,72 +181,66 @@ class FrameInfoSerializer(serializers.Serializer):
 
 
 class ListUniqueIdsSerializer(serializers.Serializer):
+
+    start_frame = serializers.IntegerField(required=False, min_value=0,)
+    end_frame = serializers.IntegerField(required=False, min_value=0,)
+
     def validate(self, data):
+
         project_id = self.context.get("project_id")
 
-        if not project_id:
-            raise serializers.ValidationError({"project_id": "project_id is required"})
+        if not Project.objects.filter(
+            project_id=project_id
+        ).exists():
 
-        if not Project.objects.filter(project_id=project_id).exists():
-            raise serializers.ValidationError({"project_id": "Invalid project ID"})
+            raise serializers.ValidationError(
+                {
+                    "project_id":
+                        "Invalid project ID"
+                }
+            )
+
+        start_frame = data.get(
+            "start_frame"
+        )
+
+        end_frame = data.get(
+            "end_frame"
+        )
+
+        # BOTH REQUIRED
+
+        if (
+            start_frame is not None
+            and end_frame is None
+        ) or (
+            start_frame is None
+            and end_frame is not None
+        ):
+
+            raise serializers.ValidationError(
+                (
+                    "Both start_frame and "
+                    "end_frame are required."
+                )
+            )
+
+        # RANGE VALIDATION
+
+        if (
+            start_frame is not None
+            and end_frame is not None
+            and start_frame > end_frame
+        ):
+
+            raise serializers.ValidationError(
+                (
+                    "start_frame cannot "
+                    "be greater than end_frame"
+                )
+            )
 
         return data
-
-    def get_all_ids(self):
-        project_id = self.context.get("project_id")
-
-        # 1. Aggregate FrameObject ONCE
-        frame_counts_qs = (
-            FrameObject.objects.filter(
-                frame__project_id_id=project_id,
-                is_active=True
-            )
-            .values("object_id")
-            .annotate(trk_len=Count("id"))
-        )
-
-        # Convert to dict → O(1) lookup
-        frame_count_map = {
-            row["object_id"]: row["trk_len"]
-            for row in frame_counts_qs
-        }
-
-        #2. Aggregate ObjectTrack ONCE
-        tracks_qs = (
-            ObjectTrack.objects.filter(
-                project_id_id=project_id,
-                object_status=1
-            )
-            .values("object_id")
-            .annotate(
-                start_frame=Min("start_frame"),
-                end_frame=Max("end_frame"),
-            )
-            .order_by("object_id")
-        )
-
-        # 3. Build final response (lightweight loop)
-        result = []
-        for row in tracks_qs:
-            object_id = row["object_id"]
-            start = row["start_frame"]
-            end = row["end_frame"]
-
-            n_frame = end - start + 1
-            trk_len = frame_count_map.get(object_id, 0)
-
-            result.append({
-                "id": object_id,
-                "start_frame": start,
-                "end_frame": end,
-                "N_frame": n_frame,
-                "trk_len": trk_len,
-            })
-
-        return {
-            "project_id": project_id,
-            "objects": result,
-        }
 
 
 class ObjectTrackDetailsSerializer(serializers.Serializer):
@@ -1165,3 +1163,333 @@ class TrkExportSerializer(serializers.Serializer):
 
     def export(self):
         return TrkExportService.export(project_id=self.validated_data["project_id"])
+
+
+
+# ==========================================
+# CONFUSION / UNCERTAINTY SERIALIZER
+# ==========================================
+class FrameConfusionRowSerializer(serializers.ModelSerializer):
+
+    class Meta:
+
+        model = FrameConfusion
+
+        fields = [
+            "id",
+            "frame_no",
+            "next_frame_no",
+            "current_object_id",
+            "best_match_object_id",
+            "second_match_object_id",
+            "uncertainty",
+            "is_forward",
+            "best_match_cost",
+            "second_match_cost",
+            "nearby_object_count",
+            "confusion_score",
+            "is_crowded",
+            "nearby_object_ids",
+            "event_type",
+            "created_at",
+        ]
+class FrameTimelineSerializer(serializers.Serializer):
+
+    project_id = serializers.IntegerField(
+        required=True,
+        help_text="Project ID",
+    )
+
+    start = serializers.IntegerField(
+        required=True,
+    )
+
+    end = serializers.IntegerField(
+        required=True,
+    )
+
+    object_ids = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+
+    def validate(self, attrs):
+
+        start = attrs["start"]
+        end = attrs["end"]
+        project_id = attrs["project_id"]
+
+        # =====================================
+        # FRAME VALIDATION
+        # =====================================
+
+        if start < 0:
+
+            raise serializers.ValidationError(
+                {
+                    "start":
+                        "start frame cannot be negative"
+                }
+            )
+
+        if end < 0:
+
+            raise serializers.ValidationError(
+                {
+                    "end":
+                        "end frame cannot be negative"
+                }
+            )
+
+        if start > end:
+
+            raise serializers.ValidationError(
+                {
+                    "frame_range":
+                        (
+                            "start frame cannot "
+                            "be greater than end frame"
+                        )
+                }
+            )
+
+        # =====================================
+        # PROJECT VALIDATION
+        # =====================================
+
+        project = Project.objects.filter(
+            project_id=project_id
+        ).first()
+
+        if not project:
+
+            raise serializers.ValidationError(
+                {
+                    "project_id":
+                        "Invalid project_id"
+                }
+            )
+
+        if (
+            project.total_frames is not None
+            and end > project.total_frames
+        ):
+
+            raise serializers.ValidationError(
+                {
+                    "end":
+                        (
+                            f"end frame exceeds "
+                            f"total frames "
+                            f"({project.total_frames})"
+                        )
+                }
+            )
+
+        # =====================================
+        # OBJECT IDS PARSING
+        # =====================================
+
+        raw_object_ids = attrs.get(
+            "object_ids",
+            ""
+        )
+
+        parsed_object_ids = []
+
+        if raw_object_ids:
+
+            try:
+
+                parsed_object_ids = [
+                    int(obj.strip())
+                    for obj in raw_object_ids.split(",")
+                    if obj.strip()
+                ]
+
+            except ValueError:
+
+                raise serializers.ValidationError(
+                    {
+                        "object_ids":
+                            (
+                                "object_ids must contain "
+                                "integers only"
+                            )
+                    }
+                )
+
+            # REMOVE DUPLICATES
+            parsed_object_ids = list(
+                dict.fromkeys(
+                    parsed_object_ids
+                )
+            )
+
+            # =====================================
+            # VALIDATE OBJECT IDS
+            # =====================================
+
+            existing_ids = set(
+                FrameObject.objects.filter(
+                    frame__project_id=project_id,
+                    frame__frame_no__gte=start,
+                    frame__frame_no__lte=end,
+                    object_id__in=parsed_object_ids,
+                    is_active=True,
+                ).values_list(
+                    "object_id",
+                    flat=True,
+                )
+            )
+
+            # ALL INVALID
+
+            if len(existing_ids) == 0:
+
+                raise serializers.ValidationError(
+                    {
+                        "object_ids":
+                            (
+                                "Provided object_ids "
+                                "do not exist "
+                                "in this project"
+                            )
+                    }
+                )
+
+            # PARTIAL INVALID
+
+            invalid_ids = [
+                obj_id
+                for obj_id in parsed_object_ids
+                if obj_id not in existing_ids
+            ]
+
+            if invalid_ids:
+
+                raise serializers.ValidationError(
+                    {
+                        "object_ids":
+                            (
+                                f"Invalid object_ids: "
+                                f"{invalid_ids}"
+                            )
+                    }
+                )
+
+        # STORE PARSED IDS
+
+        attrs["object_ids"] = (
+            parsed_object_ids
+        )
+
+        return attrs
+
+    def get_data(self):
+
+        data = self.validated_data
+
+        return FrameTimelineService.fetch(
+            project_id=data["project_id"],
+            start=data["start"],
+            end=data["end"],
+            object_ids=data.get("object_ids"),
+        )
+
+
+
+class InterpolateTrajectorySerializer(serializers.Serializer):
+
+    source_object_id = serializers.IntegerField(required=False)
+    source_end_frame = serializers.IntegerField(required=False)
+    target_object_id = serializers.IntegerField(required=False)
+    target_start_frame = serializers.IntegerField(required=False)
+    object_id = serializers.IntegerField(required=False)
+    start_frame = serializers.IntegerField(required=False)
+    end_frame = serializers.IntegerField(required=False)
+
+    def validate(self, data):
+
+        project_id = self.context["project_id"]
+
+        if not Project.objects.filter(
+            project_id=project_id
+        ).exists():
+            raise serializers.ValidationError(
+                "Invalid project"
+            )
+        if (
+            data.get("object_id") is not None
+            and data.get("start_frame") is not None
+            and data.get("end_frame") is not None
+        ):
+
+            object_exists = ObjectTrack.objects.filter(
+                project_id_id=project_id,
+                object_id=data["object_id"],
+            ).exists()
+
+            if not object_exists:
+                raise serializers.ValidationError(
+                    {
+                        "object_id": "Object does not exist"
+                    }
+                )
+
+            if data["end_frame"] <= data["start_frame"]:
+                raise serializers.ValidationError(
+                    "end_frame must be greater than start_frame"
+                )
+
+            return data
+
+        if (
+            data["target_start_frame"]
+            <=
+            data["source_end_frame"]
+        ):
+            raise serializers.ValidationError(
+                "target_start_frame must be greater than source_end_frame"
+            )
+
+        source_exists = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            frame__frame_no=data["source_end_frame"],
+            object_id=data["source_object_id"],
+            is_active=True,
+        ).exists()
+
+        if not source_exists:
+            raise serializers.ValidationError(
+                {
+                    "source_object_id":
+                    "Object not found in source frame"
+                }
+            )
+
+        target_exists = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            frame__frame_no=data["target_start_frame"],
+            object_id=data["target_object_id"],
+            is_active=True,
+        ).exists()
+
+        if not target_exists:
+            raise serializers.ValidationError(
+                {
+                    "target_object_id":
+                    "Object not found in target frame"
+                }
+            )
+
+        return data
+
+    def execute(self):
+
+        return (
+            TrajectoryInterpolationService.interpolate(
+                project_id=self.context["project_id"],
+                **self.validated_data,
+            )
+        )

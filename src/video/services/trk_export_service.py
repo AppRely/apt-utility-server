@@ -6,7 +6,7 @@ import numpy as np
 from django.conf import settings
 from rest_framework.exceptions import ValidationError
 
-from ..models import ActivityLog, Project
+from ..models import ActivityLog, Project, FrameObject
 from ..TrkFile import Trk
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,14 @@ class TrkExportService:
         # Apply operations
         ops = cls._build_operations(project_id)
         cls._apply_operations(trk, ops)
+
+        # -------------------------------------------------
+        # INTERPOLATION SYNC
+        # -------------------------------------------------
+        cls._sync_interpolated_rows(
+            trk,
+            project_id,
+        )
 
         # -------------------------------------------------
         # 🔑 FINAL AUTHORITATIVE SYNC (THIS IS CRITICAL)
@@ -205,6 +213,129 @@ class TrkExportService:
         trk.settargetframe(p1, targets=[idx1], fs=fs)
         trk.settargetframe(p2, targets=[idx2], fs=fs)
 
+
+    @classmethod
+    def _sync_interpolated_rows(
+        cls,
+        trk,
+        project_id,
+    ):
+        """
+        Write interpolated FrameObject rows
+        back into TRK.
+        """
+
+        rows = (
+            FrameObject.objects
+            .filter(
+                frame__project_id_id=project_id,
+                is_active=True,
+                is_interpolated=True,
+            )
+            .select_related("frame")
+        )
+
+        for row in rows:
+
+            target_idx = cls._target_index(
+                trk,
+                row.object_id,
+            )
+
+            if target_idx is None:
+                continue
+
+            try:
+
+                coords = np.asarray(
+                    row.coordinates,
+                    dtype=np.float32,
+                )
+
+                payload = coords.reshape(
+                    trk.nlandmarks,
+                    trk.d,
+                    1,
+                    1,
+                )
+
+                trk.settargetframe(
+                    payload,
+                    targets=np.array([target_idx], dtype=np.int32),
+                    fs=np.array([row.frame.frame_no], dtype=np.int32),
+                )
+
+                # ==========================================
+                # CONFIDENCE
+                # ==========================================
+                if (
+                    trk.pTrkConf is not None
+                    and row.confidence is not None
+                ):
+
+                    conf_payload = np.asarray(
+                        row.confidence,
+                        dtype=np.float32,
+                    ).reshape(
+                        trk.nlandmarks,
+                        1,
+                        1,
+                    )
+
+                    trk.pTrkConf.settargetframe(
+                        conf_payload,
+                        targets=np.array([target_idx], dtype=np.int32),
+                        fs=np.array([row.frame.frame_no], dtype=np.int32),
+                    )
+
+                # ==========================================
+                # TAG
+                # ==========================================
+                if (
+                    trk.pTrkTag is not None
+                    and row.tag is not None
+                ):
+
+                    tag_payload = np.asarray(
+                        row.tag,
+                        dtype=bool,
+                    ).reshape(
+                        trk.nlandmarks,
+                        1,
+                        1,
+                    )
+
+                    trk.pTrkTag.settargetframe(
+                        tag_payload,
+                        targets=np.array([target_idx], dtype=np.int32),
+                        fs=np.array([row.frame.frame_no], dtype=np.int32),
+                    )
+
+                # ==========================================
+                # TIMESTAMP
+                # ==========================================
+                if (
+                    trk.pTrkTS is not None
+                    and row.timestamp is not None
+                ):
+
+                    ts_payload = np.asarray(
+                        row.timestamp,
+                        dtype=np.float64,
+                    ).reshape(
+                        trk.nlandmarks,
+                        1,
+                        1,
+                    )
+
+                    trk.pTrkTS.settargetframe(
+                        ts_payload,
+                        targets=np.array([target_idx], dtype=np.int32),
+                        fs=np.array([row.frame.frame_no], dtype=np.int32),
+                    )
+
+            except Exception:
+                continue
     # =====================================================
     # 🔑 FINAL INVARIANT ENFORCER (THE FIX)
     # =====================================================

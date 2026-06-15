@@ -6,6 +6,9 @@ from ..models import (
     ObjectTrack,
     OperationSnapshot,
 )
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class UndoRedoService:
@@ -372,6 +375,8 @@ class UndoRedoService:
                 UndoRedoService._undo_link(snapshot)
             elif op == "swap":
                 UndoRedoService._undo_swap(snapshot)
+            elif activity.operation == "interpolate":
+                UndoRedoService._undo_interpolate(snapshot)
             else:
                 UndoRedoService._apply_snapshot(snapshot.before_state)
 
@@ -410,6 +415,8 @@ class UndoRedoService:
                 UndoRedoService._redo_link(snapshot)
             elif op == "swap":
                 UndoRedoService._redo_swap(snapshot)
+            elif activity.operation == "interpolate":
+                UndoRedoService._redo_interpolate(snapshot)
             else:
                 UndoRedoService._apply_snapshot(snapshot.after_state)
 
@@ -422,3 +429,121 @@ class UndoRedoService:
             "activity_id": activity.activity_id,
             "operation": activity.operation,
         }
+        
+    # ------------------------------------------------
+    # interpolate
+    # ------------------------------------------------
+    @staticmethod
+    def _undo_interpolate(snapshot):
+
+        after_state = snapshot.after_state
+
+        frame_ops = after_state.get(
+            "FrameObject",
+            {},
+        )
+
+        created_rows = frame_ops.get(
+            "created",
+            [],
+        )
+
+        if created_rows:
+
+            pk = UndoRedoService._get_pk_field(
+                created_rows[0]
+            )
+
+            pk_values = [
+                row[pk]
+                for row in created_rows
+            ]
+
+            FrameObject.objects.filter(
+                **{
+                    f"{pk}__in": pk_values
+                }
+            ).delete()
+
+        track_ops = snapshot.before_state.get(
+            "ObjectTrack",
+            {},
+        )
+
+        rows = track_ops.get(
+            "updated",
+            [],
+        )
+
+        if rows:
+
+            row = rows[0]
+
+            ObjectTrack.objects.filter(
+                track_id=row["track_id"]
+            ).update(
+                start_frame=row["start_frame"],
+                end_frame=row["end_frame"],
+                object_status=row["object_status"],
+                operation_note=row["operation_note"],
+            )
+
+
+    @staticmethod
+    def _redo_interpolate(snapshot):
+
+        after_state = snapshot.after_state
+
+        frame_ops = after_state.get(
+            "FrameObject",
+            {},
+        )
+
+        created_rows = frame_ops.get(
+            "created",
+            [],
+        )
+
+        if created_rows:
+
+            pk = UndoRedoService._get_pk_field(
+                created_rows[0]
+            )
+
+            for row in created_rows:
+
+                pk_val = row[pk]
+
+                data = {
+                    k: v
+                    for k, v in row.items()
+                    if k != pk
+                }
+
+                FrameObject.objects.update_or_create(
+                    **{pk: pk_val},
+                    defaults=data,
+                )
+
+        track_ops = after_state.get(
+            "ObjectTrack",
+            {},
+        )
+
+        rows = track_ops.get(
+            "updated",
+            [],
+        )
+
+        if rows:
+
+            row = rows[0]
+
+            ObjectTrack.objects.filter(
+                track_id=row["track_id"]
+            ).update(
+                start_frame=row["start_frame"],
+                end_frame=row["end_frame"],
+                object_status=row["object_status"],
+                operation_note=row["operation_note"],
+            )

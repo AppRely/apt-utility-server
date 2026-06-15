@@ -36,6 +36,9 @@ from .serializers import (
     SwapObjectSerializer,
     TrkExportSerializer,
     UndoSerializer,
+    FrameConfusionRowSerializer,
+    FrameTimelineSerializer,
+    InterpolateTrajectorySerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -43,7 +46,13 @@ from django.http import StreamingHttpResponse
 from rest_framework.decorators import action
 import mimetypes
 # Import Movie class from movies.py and Trk from TrkFile.py
+from .services.frame_timeline_service import FrameTimelineService
+import zlib
+from .services.confusion_service import ConfusionTableService
 
+from .services.unique_ids_service import UniqueIdsService
+from .services.background_executor import executor
+from .services.confusion_store_service import ConfusionStoreService
 logger = logging.getLogger(__name__)
 
 CHUNK_SIZE = 64 * 1024  # 64KB optimal chunk size
@@ -581,29 +590,96 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
     @swagger_auto_schema(
-        operation_description="Get list of all unique object IDs for the project.",
-        responses={200: "List of unique IDs", 400: "Validation error", 500: "Server error"},
+        operation_description=(
+            "Get all unique object IDs for project.\n\n"
+
+            "Behavior:\n"
+            "1. Without start_frame/end_frame:\n"
+            "   - Returns all unique IDs\n"
+            "   - Returns old API response\n\n"
+
+            "2. With start_frame/end_frame:\n"
+            "   - Filters objects within range\n"
+            "   - Adds start/end coordinates"
+        ),
+
+        manual_parameters=[
+
+            openapi.Parameter(
+                "start_frame",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description=(
+                    "Optional start frame"
+                ),
+            ),
+
+            openapi.Parameter(
+                "end_frame",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description=(
+                    "Optional end frame"
+                ),
+            ),
+        ],
+
+        responses={
+            200: "Success",
+            400: "Validation error",
+            500: "Server error",
+        },
     )
-    @action(detail=True, methods=["get"], url_path="unique-ids")
-    def get_unique_ids(self, request, pk=None):
+
+    @action( detail=True, methods=["get"], url_path="unique-ids", )
+    def get_unique_ids(self, request, pk=None, ):
         """
         GET /api/v1/videos/{project_id}/unique-ids/
 
-        Retrieve all unique object IDs for a project.
-        This endpoint returns the list of distinct object identifiers
-        present in the project's tracking data.
+        Examples
+        --------
 
-        Args:
-            request (Request): Incoming HTTP request.
-            pk (int): Project identifier.
-        Returns:
-            Response: List of unique object IDs.
+        OLD BEHAVIOR:
+        /api/v1/videos/1/unique-ids/
+
+        NEW RANGE BEHAVIOR:
+        /api/v1/videos/1/unique-ids/?start_frame=100&end_frame=200
         """
-        try:
-            serializer = ListUniqueIdsSerializer(data={}, context={"project_id": pk})
-            serializer.is_valid(raise_exception=True)
 
-            payload = serializer.get_all_ids()
+        try:
+
+            serializer = (
+                ListUniqueIdsSerializer(
+                    data=request.query_params,
+                    context={
+                        "project_id": pk,
+                    },
+                )
+            )
+
+            serializer.is_valid(
+                raise_exception=True
+            )
+
+            payload = (
+                UniqueIdsService.fetch(
+
+                    project_id=pk,
+
+                    start_frame=
+                        serializer.validated_data.get(
+                            "start_frame"
+                        ),
+
+                    end_frame=
+                        serializer.validated_data.get(
+                            "end_frame"
+                        ),
+                )
+            )
+
             return Response(
                 {
                     "status": "success",
@@ -616,18 +692,30 @@ class VideoViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     "status": "error",
-                    "message": "Invalid input data",
-                    "errors": ve.detail,
+                    "message":
+                        "Invalid input data",
+
+                    "errors":
+                        ve.detail,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception:
-            logger.error("Error fetching unique object IDs", exc_info=True)
+
+            logger.error(
+                "Error fetching unique object IDs",
+                exc_info=True,
+            )
+
             return Response(
                 {
                     "status": "error",
-                    "message": "Something went wrong while fetching unique object IDs.",
+
+                    "message": (
+                        "Something went wrong while "
+                        "fetching unique object IDs."
+                    ),
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
@@ -1381,3 +1469,438 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+
+    # =====================================
+    # CONFUSION / UNCERTAINTY TABLE API
+    # =====================================
+    @swagger_auto_schema(
+        operation_description=(
+            "Return stored confusion events."
+        ),
+        responses={
+            200: "Confusion table fetched successfully",
+            400: "Validation error",
+            500: "Server error",
+        },
+    )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="confusion-table",
+    )
+
+    def confusion_table(
+        self,
+        request,
+        pk=None,
+    ):
+
+        try:
+
+            start = request.GET.get("start")
+
+            end = request.GET.get("end")
+
+            if start is not None:
+                start = int(start)
+
+            if end is not None:
+                end = int(end)
+
+            # =====================================
+            # VALIDATION
+            # =====================================
+
+            if (
+                start is not None
+                and start < 0
+            ):
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "Start frame must be non-negative",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if (
+                end is not None
+                and end < 0
+            ):
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "End frame must be non-negative",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if (
+                start is not None
+                and end is not None
+                and start > end
+            ):
+
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "start must be <= end",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if (
+                start is not None
+                and end is not None
+                and end - start > 5000
+            ):
+
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "Range cannot exceed 5000 frames",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            project = Project.objects.filter(
+                project_id=pk
+            ).first()
+            if not project:
+
+                return Response(
+                    {
+                        "status": "error",
+                        "message":
+                            "Invalid project id",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            recalculate = (
+                request.GET.get(
+                    "recalculate",
+                    "false"
+                ).lower() == "true"
+            )
+            
+            # =====================================
+            # STATUS CHECK
+            # =====================================
+
+            status_only = (
+                request.GET.get(
+                    "status",
+                    "false"
+                ).lower() == "true"
+            )
+
+            if status_only:
+
+                return Response(
+                    {
+                        "status": "success",
+                        "confusion_status": project.confusion_status,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+
+            # =====================================
+            # RECALCULATE
+            # =====================================
+
+            if recalculate:
+
+                if project.confusion_status == "PROCESSING":
+
+                    return Response(
+                        {
+                            "status": "processing",
+                            "message":
+                                "Confusion calculation is already in progress"
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+
+                project.confusion_status = "PROCESSING"
+
+                project.save(
+                    update_fields=["confusion_status"]
+                )
+
+                executor.submit(
+                    ConfusionStoreService.generate,
+                    project_id=pk,
+                )
+
+                return Response(
+                    {
+                        "status": "success",
+                        "message":
+                            "Confusion recalculation started"
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            # =====================================
+            # TABLE OPENED WHILE PROCESSING
+            # =====================================
+
+            if project.confusion_status == "PROCESSING":
+
+                return Response(
+                    {
+                        "status": "processing",
+                        "message":
+                            "Confusion calculation is in progress"
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            # =====================================
+            # FETCH
+            # =====================================
+
+            rows = (
+                ConfusionTableService.fetch(
+                    project_id=pk,
+                    start_frame=start,
+                    end_frame=end,
+                    query_params=request.GET,
+                )
+            )
+
+            # =====================================
+            # RESPONSE
+            # =====================================
+
+            payload = {
+
+                "video_id":pk,
+                "start_frame":start,
+                "end_frame":end,
+                "total_rows":len(rows),
+
+                "rows":
+                    FrameConfusionRowSerializer(
+                        rows,
+                        many=True,
+                    ).data,
+            }
+
+            return Response(
+                {
+                    "status": "success",
+                    "data": payload,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception:
+
+            logger.error(
+                "Error fetching confusion table",
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "status": "error",
+                    "message":
+                        "Something went wrong while "
+                        "fetching confusion table",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        
+    # =====================================
+    ## for Time line api 
+    # =====================================
+    @swagger_auto_schema(
+        operation_description=(
+            "Return compressed timeline data "
+            "for selected objects in frame range."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                "start",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="Start frame",
+            ),
+            openapi.Parameter(
+                "end",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="End frame",
+            ),
+            openapi.Parameter(
+                "object_ids",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                required=False,
+                description=(
+                    "Comma separated object ids. "
+                    "Example: 4,2,11"
+                ),
+            ),
+            openapi.Parameter(
+                "debug",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_BOOLEAN,
+                required=False,
+                description="Return readable JSON response",
+            ),
+        ],
+        responses={
+            200: "Timeline data fetched successfully",
+            400: "Validation error",
+            500: "Server error",
+        },
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="frame-timeline",
+    )
+    def frame_timeline(
+        self,
+        request,
+        pk=None,
+    ):
+
+        try:
+
+            data = request.query_params.copy()
+
+            data["project_id"] = pk
+
+            serializer = (
+                FrameTimelineSerializer(
+                    data=data
+                )
+            )
+
+            serializer.is_valid(
+                raise_exception=True
+            )
+
+            payload = serializer.get_data()
+
+            # =====================================
+            # DEBUG MODE
+            # =====================================
+
+            debug = request.GET.get(
+                "debug",
+                "false",
+            ).lower() == "true"
+
+            if debug:
+
+                return Response(
+                    {
+                        "status": "success",
+                        "data": payload,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            # =====================================
+            # COMPRESSED RESPONSE
+            # =====================================
+
+            json_bytes = orjson.dumps(
+                payload
+            )
+
+            compressed = zlib.compress(
+                json_bytes,
+                level=6,
+            )
+
+            return HttpResponse(
+                compressed,
+                content_type="application/octet-stream",
+            )
+
+        except serializers.ValidationError as ve:
+
+            return Response(
+                {
+                    "status": "error",
+                    "message":
+                        "Invalid query parameters",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+
+            logger.error(
+                "Error fetching frame timeline",
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "status": "error",
+                    "message":
+                        (
+                            "Something went wrong "
+                            "while fetching timeline data"
+                        ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    # =====================================
+    #  Interpolate Trajectory 
+    # =====================================
+    @swagger_auto_schema(
+        method="post",
+        request_body=InterpolateTrajectorySerializer,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="interpolate-trajectory",
+    )
+    def interpolate_trajectory(
+        self,
+        request,
+        pk=None,
+    ):
+
+        serializer = (
+            InterpolateTrajectorySerializer(
+                data=request.data,
+                context={
+                    "project_id": pk
+                },
+            )
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        result = serializer.execute()
+
+        return Response(
+            {
+                "status": "success",
+                "data": result,
+            },
+            status=status.HTTP_200_OK,
+        )

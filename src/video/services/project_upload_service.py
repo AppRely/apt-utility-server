@@ -11,6 +11,10 @@ from .project_file_storage_service import ProjectFileStorageService
 from .trk_validation_service import TrkValidationService
 from .video_frame_bulk_insert_service import VideoFrameBulkInsertService
 
+from .background_executor import executor
+from .confusion_store_service import ConfusionStoreService
+from .object_linking_suggestion_service import ObjectLinkingService
+
 
 class ProjectUploadService:
     @classmethod
@@ -29,6 +33,7 @@ class ProjectUploadService:
                 trk_file_path=trk_path,
                 project_status="inprogress",
                 status="Completed",
+                confusion_status="COMPLETED",
                 # Save Metadata
                 fps=metadata.get("fps"),
                 width=metadata.get("width"),
@@ -53,6 +58,12 @@ class ProjectUploadService:
 
             ObjectTrackRebuildService.rebuild(project_id=project.project_id)
 
+        print(f"BEFORE THREAD SUBMIT | project_id={project.project_id}", flush=True)
+        transaction.on_commit(lambda: executor.submit( ConfusionStoreService.generate, project_id=project.project_id, ))
+        # transaction.on_commit(lambda: executor.submit(project.project_id,))
+
+        transaction.on_commit(lambda: executor.submit(ObjectLinkingService.generate, project_id=project.project_id,))
+        print(f"AFTER THREAD SUBMIT | project_id={project.project_id}", flush=True)
         # AFTER DB INSERT → store STREAM URLs
         try:
             video_url, trk_url = ProjectFileStorageService.build_stream_urls(project.project_id, request)
