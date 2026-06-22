@@ -1,6 +1,7 @@
 # src/video/services/project_upload_service.py
 
 import os
+import numpy as np
 
 from django.db import transaction
 
@@ -23,6 +24,36 @@ class ProjectUploadService:
         video_path, trk_path, metadata = ProjectFileStorageService.save(project_name, video_file, tracking_file)
 
         trk = TrkValidationService.load_and_validate(trk_path)
+        skeleton_graph = []
+
+        try:
+            params = trk.trkData["trkInfo"]["params"]
+
+            op_graph = params.get("op_affinity_graph")
+            dpk_graph = params.get("dpk_graph")
+
+            if op_graph is not None and len(op_graph) > 0:
+
+                skeleton_graph = (
+                    op_graph.tolist()
+                    if isinstance(op_graph, np.ndarray)
+                    else op_graph
+                )
+
+            elif dpk_graph is not None and len(dpk_graph) > 0:
+
+                skeleton_graph = (
+                    dpk_graph.tolist()
+                    if isinstance(dpk_graph, np.ndarray)
+                    else dpk_graph
+                )
+
+            else:
+                skeleton_graph = []
+
+        except Exception:
+            print(f"Skeleton extraction failed: {e}")
+            skeleton_graph = []
 
         with transaction.atomic():
             project = Project.objects.create(
@@ -34,6 +65,7 @@ class ProjectUploadService:
                 project_status="inprogress",
                 status="Completed",
                 confusion_status="COMPLETED",
+                skeleton_graph=skeleton_graph,
                 # Save Metadata
                 fps=metadata.get("fps"),
                 width=metadata.get("width"),
