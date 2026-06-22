@@ -15,7 +15,7 @@ class FrameObjectRangeNoFallbackService:
 
         results = {}
 
-        for obj in queryset:
+        for obj in queryset.iterator(chunk_size=10000):
             obj_id = obj["object_id"]
             frame_no = obj["frame__frame_no"]
             coords = obj["coordinates"]
@@ -29,10 +29,27 @@ class FrameObjectRangeNoFallbackService:
             if frames and frames[-1]["coordinates"] == coords:
                 continue
 
+            valid_points = [
+                point
+                for point in (coords or [])
+                if isinstance(point, (list, tuple))
+                and len(point) >= 2
+                and point[0] is not None
+                and point[1] is not None
+            ]
+
+            if valid_points:
+                avg_x = sum(point[0] for point in valid_points) / len(valid_points)
+                avg_y = sum(point[1] for point in valid_points) / len(valid_points)
+                average = [avg_x, avg_y]
+            else:
+                average = None
+
             frames.append(
                 {
                     "frame_id": frame_no,
                     "coordinates": coords,
+                    "average": average,
                 }
             )
 
