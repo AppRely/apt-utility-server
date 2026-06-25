@@ -18,6 +18,33 @@ from .object_linking_suggestion_service import ObjectLinkingService
 
 
 class ProjectUploadService:
+    @staticmethod
+    def make_json_serializable(obj):
+        if isinstance(obj, np.ndarray):
+            if obj.size == 1:
+                return obj.item()
+            return [ProjectUploadService.make_json_serializable(x) for x in obj.tolist()]
+
+        elif isinstance(obj, list):
+            return [ProjectUploadService.make_json_serializable(x) for x in obj]
+
+        elif isinstance(obj, tuple):
+            return [ProjectUploadService.make_json_serializable(x) for x in obj]
+
+        elif isinstance(obj, dict):
+            return {
+                k: ProjectUploadService.make_json_serializable(v)
+                for k, v in obj.items()
+            }
+
+        elif isinstance(obj, np.integer):
+            return int(obj)
+
+        elif isinstance(obj, np.floating):
+            return float(obj)
+
+        return obj
+
     @classmethod
     def create(cls, *, project_name, video_file, tracking_file, request):
         # OUTSIDE DB transaction
@@ -25,7 +52,6 @@ class ProjectUploadService:
 
         trk = TrkValidationService.load_and_validate(trk_path)
         skeleton_graph = []
-
         try:
             params = trk.trkData["trkInfo"]["params"]
 
@@ -33,28 +59,20 @@ class ProjectUploadService:
             dpk_graph = params.get("dpk_graph")
 
             if op_graph is not None and len(op_graph) > 0:
-
-                skeleton_graph = (
-                    op_graph.tolist()
-                    if isinstance(op_graph, np.ndarray)
-                    else op_graph
-                )
+                skeleton_graph = op_graph
 
             elif dpk_graph is not None and len(dpk_graph) > 0:
-
-                skeleton_graph = (
-                    dpk_graph.tolist()
-                    if isinstance(dpk_graph, np.ndarray)
-                    else dpk_graph
-                )
+                skeleton_graph = dpk_graph
 
             else:
                 skeleton_graph = []
 
-        except Exception:
+        except Exception as e:
             print(f"Skeleton extraction failed: {e}")
             skeleton_graph = []
 
+        # Always convert to JSON-safe Python objects
+        skeleton_graph = cls.make_json_serializable(skeleton_graph)
         with transaction.atomic():
             project = Project.objects.create(
                 project_name=project_name,
