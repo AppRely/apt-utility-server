@@ -27,6 +27,7 @@ class Project(models.Model):
     project_status = models.CharField(max_length=50, default="inprogress")
     # Confusion recalculation status: "FAILED", "PROCESSING", "COMPLETED"
     confusion_status = models.CharField(max_length=20, default="COMPLETED",)
+    skeleton_graph = models.JSONField(null=True, blank=True, default=list )
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

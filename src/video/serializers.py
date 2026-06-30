@@ -68,6 +68,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             "width",
             "height",
             "duration",
+            "skeleton_graph",
             "total_frames",
             "created_at",
             "updated_at",

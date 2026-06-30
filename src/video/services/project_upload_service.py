@@ -1,6 +1,7 @@
 # src/video/services/project_upload_service.py
 
 import os
+import numpy as np
 
 from django.db import transaction
 
@@ -17,13 +18,61 @@ from .object_linking_suggestion_service import ObjectLinkingService
 
 
 class ProjectUploadService:
+    @staticmethod
+    def make_json_serializable(obj):
+        if isinstance(obj, np.ndarray):
+            if obj.size == 1:
+                return obj.item()
+            return [ProjectUploadService.make_json_serializable(x) for x in obj.tolist()]
+
+        elif isinstance(obj, list):
+            return [ProjectUploadService.make_json_serializable(x) for x in obj]
+
+        elif isinstance(obj, tuple):
+            return [ProjectUploadService.make_json_serializable(x) for x in obj]
+
+        elif isinstance(obj, dict):
+            return {
+                k: ProjectUploadService.make_json_serializable(v)
+                for k, v in obj.items()
+            }
+
+        elif isinstance(obj, np.integer):
+            return int(obj)
+
+        elif isinstance(obj, np.floating):
+            return float(obj)
+
+        return obj
+
     @classmethod
     def create(cls, *, project_name, video_file, tracking_file, request):
         # OUTSIDE DB transaction
         video_path, trk_path, metadata = ProjectFileStorageService.save(project_name, video_file, tracking_file)
 
         trk = TrkValidationService.load_and_validate(trk_path)
+        skeleton_graph = []
+        try:
+            params = trk.trkData["trkInfo"]["params"]
 
+            op_graph = params.get("op_affinity_graph")
+            dpk_graph = params.get("dpk_graph")
+
+            if op_graph is not None and len(op_graph) > 0:
+                skeleton_graph = op_graph
+
+            elif dpk_graph is not None and len(dpk_graph) > 0:
+                skeleton_graph = dpk_graph
+
+            else:
+                skeleton_graph = []
+
+        except Exception as e:
+            print(f"Skeleton extraction failed: {e}")
+            skeleton_graph = []
+
+        # Always convert to JSON-safe Python objects
+        skeleton_graph = cls.make_json_serializable(skeleton_graph)
         with transaction.atomic():
             project = Project.objects.create(
                 project_name=project_name,
@@ -34,6 +83,7 @@ class ProjectUploadService:
                 project_status="inprogress",
                 status="Completed",
                 confusion_status="COMPLETED",
+                skeleton_graph=skeleton_graph,
                 # Save Metadata
                 fps=metadata.get("fps"),
                 width=metadata.get("width"),
