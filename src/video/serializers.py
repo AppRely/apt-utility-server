@@ -690,7 +690,7 @@ class BreakObjectSerializer(serializers.Serializer):
                 "FrameObject": FrameObject.objects.filter(
                     frame__project_id_id=project_id,
                     object_id=object_id,
-                    frame__frame_no__gt=break_frame,
+                    frame__frame_no__gte=break_frame,
                     frame__frame_no__lte=end_frame,
                 ),
                 "ObjectTrack": ObjectTrack.objects.filter(track_id=obj_track.track_id),
@@ -708,24 +708,24 @@ class BreakObjectSerializer(serializers.Serializer):
 
             rows_updated = FrameObject.objects.filter(
                 frame__project_id_id=project_id,
-                frame__frame_no__gt=break_frame,
+                frame__frame_no__gte=break_frame,
                 frame__frame_no__lte=end_frame,
                 object_id=object_id,
             ).update(object_id=new_object_id)
 
             # Update old object_track
-            obj_track.end_frame = break_frame
-            obj_track.operation_note = f"break_from_{start_frame}_to_{break_frame}"
+            obj_track.end_frame = break_frame - 1
+            obj_track.operation_note = f"break_from_{start_frame}_to_{break_frame - 1}"
             obj_track.save(update_fields=["end_frame", "operation_note"])
 
             # 4️ Create new object_track
             new_track = ObjectTrack.objects.create(
                 project_id_id=project_id,
                 object_id=new_object_id,
-                start_frame=break_frame + 1,
+                start_frame=break_frame,
                 end_frame=end_frame,
                 object_status=1,
-                operation_note=f"break_from_{break_frame + 1}_to_{end_frame}",
+                operation_note=f"break_from_{break_frame}_to_{end_frame}",
             )
 
             # ---------------------------
@@ -737,7 +737,7 @@ class BreakObjectSerializer(serializers.Serializer):
                     "FrameObject": FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         object_id=new_object_id,
-                        frame__frame_no__gt=break_frame,
+                        frame__frame_no__gte=break_frame,
                         frame__frame_no__lte=end_frame,
                     ),
                     "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj_track.track_id, new_track.track_id]),
@@ -766,8 +766,8 @@ class BreakObjectSerializer(serializers.Serializer):
         return {
             "old_object_id": object_id,
             "new_object_id": new_object_id,
-            "old_range": f"{start_frame}-{break_frame}",
-            "new_range": f"{break_frame + 1}-{end_frame}",
+            "old_range": f"{start_frame}-{break_frame - 1 }",
+            "new_range": f"{break_frame}-{end_frame}",
             "rows_updated_in_frame_object": rows_updated,
         }
 
