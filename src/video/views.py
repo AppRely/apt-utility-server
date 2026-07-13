@@ -16,9 +16,11 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from .services.activity_log_export_service import ActivityLogExportService
 
 from .models import Project, VideoFrame
 from .serializers import (
+    ActivityLogExportSerializer,
     ActivityLogRequestSerializer,
     ActivityLogSerializer,
     BreakObjectSerializer,
@@ -1904,3 +1906,83 @@ class VideoViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+        
+    #####################################
+    # Activity Log Export API
+    #####################################
+    @swagger_auto_schema(
+        operation_description="Export applied activity logs as a CSV file.",
+        manual_parameters=[
+            openapi.Parameter(
+                "project_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="Project ID",
+            ),
+        ],
+        responses={
+            200: "CSV file",
+            400: "Validation error",
+            404: "No activity logs found",
+            500: "Server error",
+        },
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="activity/logs/export",
+    )
+    def export_activity_logs(self, request):
+        """
+        GET /api/v1/videos/activity/logs/export?project_id=<project_id>
+
+        Export currently applied activity logs.
+        """
+
+        try:
+            serializer = ActivityLogExportSerializer(
+                data=request.query_params
+            )
+
+            serializer.is_valid(raise_exception=True)
+
+            project_id = serializer.validated_data["project_id"]
+
+            return ActivityLogExportService.export(project_id)
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid query parameters.",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except ValueError as exc:
+            return Response(
+                {
+                    "status": "error",
+                    "message": str(exc),
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except Exception:
+            logger.error(
+                "Error exporting activity logs.",
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        "An unexpected error occurred while "
+                        "exporting activity logs."
+                    ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

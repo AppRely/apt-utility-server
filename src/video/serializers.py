@@ -16,7 +16,7 @@ from .services.snapshot_logger import SnapshotLogger
 from .services.trk_export_service_v2 import TrkBuilderExportService
 from .services.undo_redo_service import UndoRedoService
 from .services.frame_timeline_service import FrameTimelineService
-
+from .services.activity_log_export_service import ActivityLogExportService
 from .services.confusion_service import ConfusionTableService
 from .services.trajectory_interpolation_service import TrajectoryInterpolationService
 
@@ -1494,3 +1494,30 @@ class InterpolateTrajectorySerializer(serializers.Serializer):
                 **self.validated_data,
             )
         )
+
+
+
+###########################################
+## ACTIVITY LOG EXPORT SERIALIZER
+###########################################
+class ActivityLogExportSerializer(serializers.Serializer):
+    """
+    Serializer to validate audit trail export request.
+    """
+
+    project_id = serializers.IntegerField(
+        required=True,
+        help_text="Project ID",
+    )
+
+    def validate_project_id(self, value):
+        """
+        Validate that the project exists.
+        """
+
+        if not Project.objects.filter(project_id=value).exists():
+            raise serializers.ValidationError(
+                f"Project with ID {value} does not exist."
+            )
+
+        return value
