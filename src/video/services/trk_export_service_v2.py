@@ -94,10 +94,6 @@ class TrkBuilderExportService:
 
     def build(self):
 
-        logger.info("=" * 80)
-        logger.info("NEW DATABASE EXPORT")
-        logger.info("=" * 80)
-
         self._load_project()
 
         self._prepare_export_file()
@@ -108,39 +104,7 @@ class TrkBuilderExportService:
 
         self._build_object_map()
 
-        self._verify_original_trk()
-
-        self._print_database_info()
-
         self._allocate_targets()
-
-        self._verify_allocated_trk()
-        # self._write_single_object(1387)
-        # self._write_object(1387)
-        # self._write_all_coordinates()
-        # self._write_all_track_data()
-        # self._verify_payload_shape(1387)
-        # self._write_single_frame(1387)
-
-        #
-        # PART-2
-        #
-        # self._allocate_targets()
-
-        #
-        # PART-3
-        #
-        # self._write_coordinates()
-
-        #
-        # PART-4
-        #
-        # self._write_metadata()
-
-        #
-        # PART-5
-        #
-        # self._save()
 
         self._write_all_track_data()
 
@@ -152,10 +116,6 @@ class TrkBuilderExportService:
 
         self._save_trk()
 
-        self._verify_saved_trk()
-       
-        # Compare metadata with the original
-        self._verify_metadata_integrity()
 
         return {
             "project_id": self.project_id,
@@ -163,11 +123,6 @@ class TrkBuilderExportService:
             "trk_path": self.export_path,
         }
 
-        # return {
-        #     "project_id": self.project_id,
-        #     "trk_version": self.trk_version,
-        #     "trk_path": self.export_path,
-        # }
 
     # =====================================================
     # LOAD PROJECT
@@ -246,59 +201,13 @@ class TrkBuilderExportService:
     # LOAD TRK
     # =====================================================
     def _load_trk(self):
-
-        self.trk = Trk(
-            self.export_path
-        )
-
-        print("\n" + "=" * 80)
-        print("ORIGINAL TRACKLET INFORMATION")
-        print("=" * 80)
-
-        print("Data Type        :", type(self.trk.pTrk.data))
-        print("Element Type     :", type(self.trk.pTrk.data[0]))
-        print("Coordinate Dtype :", self.trk.pTrk.data[0].dtype)
-        print("Coordinate Shape :", self.trk.pTrk.data[0].shape)
-
-        if self.trk.pTrkConf is not None:
-            print("Confidence Dtype :", self.trk.pTrkConf.data[0].dtype)
-
-        if self.trk.pTrkTS is not None:
-            print("Timestamp Dtype  :", self.trk.pTrkTS.data[0].dtype)
-
-        if self.trk.pTrkTag is not None:
-            print("Tag Dtype        :", self.trk.pTrkTag.data[0].dtype)
-
-        print("=" * 80)
-
-        print(
-            "Original TRK Loaded"
-        )
-
-        print(
-            "Targets     : %d",
-            self.trk.ntargets,
-        )
-
-        print(
-            "Frames      : %d",
-            self.trk.T,
-        )
-
-        print(
-            "Landmarks   : %d",
-            self.trk.nlandmarks,
-        )
+        self.trk = Trk( self.export_path )
 
     # =====================================================
     # LOAD DATABASE
     # =====================================================
 
     def _load_database(self):
-
-        logger.info(
-            "Loading ObjectTrack..."
-        )
 
         self.object_tracks = list(
             ObjectTrack.objects.filter(
@@ -313,15 +222,6 @@ class TrkBuilderExportService:
             .order_by("object_id")
         )
 
-        logger.info(
-            "Tracks : %d",
-            len(self.object_tracks),
-        )
-
-        logger.info(
-            "Loading VideoFrame..."
-        )
-
         self.video_frames = list(
             VideoFrame.objects.filter(
                 project_id=self.project_id,
@@ -332,11 +232,6 @@ class TrkBuilderExportService:
             .order_by("frame_no")
         )
 
-        logger.info(
-            "Frames : %d",
-            len(self.video_frames),
-        )
-
         self.frame_map = {
 
             x.frame_no: x
@@ -344,10 +239,6 @@ class TrkBuilderExportService:
             for x in self.video_frames
 
         }
-
-        logger.info(
-            "Loading FrameObject..."
-        )
 
         self.frame_objects = list(
             FrameObject.objects.filter(
@@ -369,20 +260,11 @@ class TrkBuilderExportService:
             )
         )
 
-        logger.info(
-            "FrameObjects : %d",
-            len(self.frame_objects),
-        )
-
     # =====================================================
     # OBJECT MAP
     # =====================================================
 
     def _build_object_map(self):
-
-        print("\n" + "=" * 80)
-        print("BUILDING OBJECT MAP")
-        print("=" * 80)
 
         #
         # Create object dictionary
@@ -405,75 +287,7 @@ class TrkBuilderExportService:
             if obj is not None:
                 obj["frames"][row.frame.frame_no] = row
 
-        total_objects = len(self.objects)
-
-        print(f"Objects Loaded : {total_objects}")
-
-        #
-        # Print only first 5 objects
-        #
-        object_ids = sorted(self.objects.keys())[:5]
-
-        for object_id in object_ids:
-
-            print(
-                f"Object {object_id} -> "
-                f"{len(self.objects[object_id]['frames'])} Frames"
-            )
-
-        print("=" * 80)
-
-    def _print_trk_info(self):
-
-        print("\n" + "=" * 80)
-        print("TRK INFORMATION")
-        print("=" * 80)
-
-        print("ntargets : %d", self.trk.ntargets)
-        print("T0       : %d", self.trk.T0)
-        print("T        : %d", self.trk.T)
-        print("Landmarks: %d", self.trk.nlandmarks)
-        print("Sparse   : %s", self.trk.issparse)
-
-        print("pTrkiTgt : %d", len(self.trk.pTrkiTgt))
-
-        print("pTrk      : %d", self.trk.pTrk.ntargets)
-
-        if self.trk.pTrkConf is not None:
-            print("pTrkConf  : %d", self.trk.pTrkConf.ntargets)
-
-        if self.trk.pTrkTS is not None:
-            print("pTrkTS    : %d", self.trk.pTrkTS.ntargets)
-
-        if self.trk.pTrkTag is not None:
-            print("pTrkTag   : %d", self.trk.pTrkTag.ntargets)
-
-        if hasattr(self.trk, "pTrkAnimalConf") and self.trk.pTrkAnimalConf is not None:
-            print("AnimalConf: %d", self.trk.pTrkAnimalConf.ntargets)
-
-    def _print_database_info(self):
-
-        print("\n" + "=" * 80)
-        print("DATABASE INFORMATION")
-        print("=" * 80)
-
-        print(f"Object Tracks    : {len(self.object_tracks)}")
-        print(f"Frame Objects    : {len(self.frame_objects)}")
-
-        ids = sorted(self.objects.keys())
-
-        print(f"First Object ID  : {ids[0]}")
-        print(f"Last Object ID   : {ids[-1]}")
-        print(f"Highest ObjectID : {max(ids)}")
-
-        print("=" * 80)
-
-
     def _allocate_targets(self):
-
-        print("\n" + "=" * 80)
-        print("ALLOCATING TARGETS")
-        print("=" * 80)
 
         #
         # Get all object IDs currently present in the database
@@ -486,11 +300,6 @@ class TrkBuilderExportService:
         else:
             highest_id = max(object_ids)
             total_targets = highest_id + 1
-
-        print(f"Highest Object ID : {highest_id}")
-        print(f"Database Objects  : {len(object_ids)}")
-
-        print(f"Allocating Targets : {total_targets}")
 
         #
         # Reinitialize ALL tracklets
@@ -522,292 +331,8 @@ class TrkBuilderExportService:
         for object_id in object_ids:
             self.target_map[object_id] = object_id
 
-        print("\nAllocation Complete")
-        print("----------------------------")
-        print(f"TRK Targets      : {self.trk.ntargets}")
-        print(f"Target Array     : {len(self.trk.pTrkiTgt)}")
-        print(f"Highest Target   : {highest_id}")
-        print(f"Active Objects   : {len(self.target_map)}")
-        print("=" * 80)
-
-    def _verify_original_trk(self):
-
-        print("\nVERIFY ORIGINAL TRK")
-
-        print("=" * 80)
-
-        print("Targets :", self.trk.ntargets)
-
-        print("Last IDs :", self.trk.pTrkiTgt[-20:])
-
-        print("Startframes :", self.trk.pTrk.startframes[-5:])
-
-        print("Endframes :", self.trk.pTrk.endframes[-5:])
-
-        print("=" * 80)
-
-
-    def _verify_allocated_trk(self):
-
-        print("\n")
-        print("=" * 80)
-        print("VERIFY ALLOCATED TRK")
-        print("=" * 80)
-
-        print("TRK Targets      :", self.trk.ntargets)
-        print("Target Array     :", len(self.trk.pTrkiTgt))
-
-        print("Last Target IDs  :")
-        print(self.trk.pTrkiTgt[-20:])
-
-        print()
-
-        print("Startframes Shape :", self.trk.pTrk.startframes.shape)
-        print("Endframes Shape   :", self.trk.pTrk.endframes.shape)
-
-        print()
-
-        print("Last Startframes")
-        print(self.trk.pTrk.startframes[-10:])
-
-        print()
-
-        print("Last Endframes")
-        print(self.trk.pTrk.endframes[-10:])
-
-        print("=" * 80)
-
-
-    # def _write_single_object(self, object_id):
-
-    #     if object_id not in self.objects:
-    #         print(f"Object {object_id} not found.")
-    #         return
-
-    #     target = self.target_map[object_id]
-
-    #     print("\n" + "=" * 80)
-    #     print(f"OBJECT : {object_id}")
-    #     print(f"TARGET : {target}")
-    #     print("=" * 80)
-
-    #     frames = self.objects[object_id]["frames"]
-
-    #     print(f"Total Frames : {len(frames)}")
-
-    #     #
-    #     # First frame only
-    #     #
-    #     frame_no = sorted(frames.keys())[0]
-
-    #     row = frames[frame_no]
-
-    #     print("Frame :", frame_no)
-
-    #     print("Coordinates")
-    #     print(row.coordinates)
-
-    #     print("Confidence")
-    #     print(row.confidence)
-
-    #     print("Timestamp")
-    #     print(row.timestamp)
-
-    #     print("Tag")
-    #     print(row.tag)
-
-    def _verify_payload_shape(self, object_id):
-
-        target = self.target_map[object_id]
-
-        frame_no = min(self.objects[object_id]["frames"])
-
-        print("\n" + "=" * 80)
-        print("VERIFY PAYLOAD")
-        print("=" * 80)
-
-        frame = self.trk.getframe(frame_no)
-
-        print("Frame Shape :", frame.shape)
-
-        print()
-
-        print("Target Shape :")
-
-        print(frame[..., target])
-
-        print()
-
-        print("Target Shape Dimensions")
-
-        print(frame[..., target].shape)
-
-        print("=" * 80)
-
-
-    def _write_single_frame(self, object_id):
-
-        target = self.target_map[object_id]
-
-        frame_no = min(self.objects[object_id]["frames"])
-
-        row = self.objects[object_id]["frames"][frame_no]
-
-        coords = np.asarray(
-            row.coordinates,
-            dtype=np.float32,
-        )
-
-        coords = coords[:, :, None, None]
-
-        print("\n")
-        print("=" * 80)
-        print("WRITING SINGLE FRAME")
-        print("=" * 80)
-
-        print("Frame :", frame_no)
-
-        print("Target:", target)
-
-        print("Payload Shape:", coords.shape)
-
-        fs = np.array(
-            [frame_no],
-            dtype=np.int32,
-        )
-        print(type(fs))
-        print(fs)
-        self.trk.settargetframe(
-            coords,
-            targets=[target],
-            fs=fs,
-        )
-        #
-        # Read back
-        #
-
-        frame = self.trk.getframe(frame_no)
-
-        written = frame[..., target]
-
-        print()
-
-        print("Written Shape :", written.shape)
-
-        print()
-
-        print("Written Values")
-
-        print(written)
-
-        print("=" * 80)
-
-    def _write_object(self, object_id):
-
-        if object_id not in self.objects:
-            print(f"Object {object_id} not found.")
-            return
-
-        target = self.target_map[object_id]
-
-        frames = self.objects[object_id]["frames"]
-
-        print("\n" + "=" * 80)
-        print(f"WRITING OBJECT : {object_id}")
-        print(f"TARGET         : {target}")
-        print(f"TOTAL FRAMES   : {len(frames)}")
-        print("=" * 80)
-
-        frame_numbers = sorted(frames.keys())
-
-        for i, frame_no in enumerate(frame_numbers):
-
-            row = frames[frame_no]
-
-            #
-            # Coordinates
-            #
-            coords = np.asarray(
-                row.coordinates,
-                dtype=np.float32,
-            )
-
-            #
-            # (17,2) -> (17,2,1,1)
-            #
-            coords = coords[:, :, None, None]
-
-            self.trk.settargetframe(
-                coords,
-                targets=[target],
-                fs=np.array([frame_no], dtype=np.int32),
-            )
-
-            #
-            # Progress
-            #
-            if i % 100 == 0:
-                print(
-                    f"Written {i + 1}/{len(frame_numbers)} frames"
-                )
-
-        #
-        # Verify first frame
-        #
-        first_frame = frame_numbers[0]
-
-        frame = self.trk.getframe(first_frame)
-
-        print("\nVerification")
-
-        print(frame[..., target])
-
-        print("=" * 80)
-
-    def _write_all_coordinates(self):
-
-        print("\n" + "=" * 80)
-        print("WRITING ALL COORDINATES")
-        print("=" * 80)
-
-        object_ids = sorted(self.objects.keys())
-
-        total_objects = len(object_ids)
-
-        for obj_index, object_id in enumerate(object_ids, start=1):
-
-            target = self.target_map[object_id]
-            frames = self.objects[object_id]["frames"]
-
-            print(
-                f"[{obj_index}/{total_objects}] "
-                f"Object {object_id} "
-                f"Frames={len(frames)}"
-            )
-
-            for frame_no, row in sorted(frames.items()):
-
-                coords = np.asarray(
-                    row.coordinates,
-                    dtype=np.float32,
-                )
-
-                coords = coords[:, :, None, None]
-
-                self.trk.settargetframe(
-                    coords,
-                    targets=[target],
-                    fs=np.array([frame_no], dtype=np.int32),
-                )
-
-        print("\nFinished writing all coordinates.")
-
 
     def _write_all_track_data(self):
-        print("\n" + "=" * 80)
-        print("BUILDING TRACKLETS")
-        print("=" * 80)
-
         total_targets = self.trk.ntargets
 
         # ------------------------------------------------------------
@@ -833,12 +358,8 @@ class TrkBuilderExportService:
         animal_conf_data = [None] * total_targets if has_animal_conf else None
 
         object_ids = sorted(self.objects.keys())
-        total_objects = len(object_ids)
 
         for obj_index, object_id in enumerate(object_ids, start=1):
-            if (obj_index == 1 or obj_index % 100 == 0 or obj_index == total_objects):
-                print(f"[{obj_index}/{total_objects}] Object {object_id}")
-
             target = self.target_map[object_id]
 
             track = self.objects[object_id]["track"]
@@ -927,20 +448,6 @@ class TrkBuilderExportService:
 
     def _install_tracklets(self):
 
-        print("="*80)
-        print("INSTALL TRACKLETS")
-        print("="*80)
-        print("=" * 80)
-        print("CHECK TRACKLET DATA")
-        print("=" * 80)
-
-        print(type(self.coord_data))
-        print(type(self.coord_data[0]))
-
-        print(self.coord_data[0].dtype)
-        print(self.coord_data[1].dtype)
-
-        print(self.coord_data[-1])
         self.trk.pTrk.data = self.coord_data
 
         if self.trk.pTrkConf is not None:
@@ -958,10 +465,6 @@ class TrkBuilderExportService:
         print("Tracklets Installed")
 
     def _write_metadata(self):
-
-        print("\n" + "=" * 80)
-        print("WRITING METADATA")
-        print("=" * 80)
 
         total_targets = self.trk.ntargets
 
@@ -1029,18 +532,8 @@ class TrkBuilderExportService:
 
         print("Metadata Written")
 
-        print("First Start :", startframes[:5])
-        print("Last Start  :", startframes[-5:])
-
-        print("First End   :", endframes[:5])
-        print("Last End    :", endframes[-5:])
-
-
     def _finalize_metadata(self):
 
-        print("\n" + "=" * 80)
-        print("FINALIZING TRK")
-        print("=" * 80)
 
         total_targets = self.trk.ntargets
 
@@ -1076,17 +569,7 @@ class TrkBuilderExportService:
             total_targets,
             dtype=np.int32,
         )
-        print("pTrkiTgt dtype :", self.trk.pTrkiTgt.dtype)
-
-        print(f"Targets : {total_targets}")
-
-        print("Final Target IDs")
-
-        print(
-            self.trk.pTrkiTgt[-20:]
-            if total_targets >= 20
-            else self.trk.pTrkiTgt
-        )
+        
 
     @staticmethod
     def _sanitize_unsigned_dtypes(trk):
@@ -1133,113 +616,13 @@ class TrkBuilderExportService:
 
     def _save_trk(self):
 
-        print("\n" + "=" * 80)
-        print("SAVING TRK")
-        print("=" * 80)
-
-        print("Output File")
-        print(self.export_path)
-
         #
         # Defensive: strip any unsigned-integer dtypes before writing,
         # regardless of where they came from.
         #
         self._sanitize_unsigned_dtypes(self.trk)
 
-        print("\n" + "=" * 80)
-        print("VERIFY DTYPES BEFORE SAVE")
-        print("=" * 80)
-
-        print("startframes :", self.trk.startframes.dtype)
-        print("endframes   :", self.trk.endframes.dtype)
-        print("nframes     :", self.trk.nframes.dtype)
-        print("pTrkiTgt    :", self.trk.pTrkiTgt.dtype)
-
-        print()
-
-        print("Last Startframes")
-        print(self.trk.startframes[-10:])
-
-        print("Last Endframes")
-        print(self.trk.endframes[-10:])
-
-        print("Last NFrames")
-        print(self.trk.nframes[-10:])
-
-        print("Last Target IDs")
-        print(self.trk.pTrkiTgt[-10:])
-
-        print()
-
-        print("Coordinate Container :", type(self.trk.pTrk.data))
-        print("Coordinate Element   :", type(self.trk.pTrk.data[0]))
-        print("Coordinate Dtype     :", self.trk.pTrk.data[0].dtype)
-
-        if self.trk.pTrkConf is not None:
-            print("Confidence Dtype     :", self.trk.pTrkConf.data[0].dtype)
-
-        if self.trk.pTrkTS is not None:
-            print("Timestamp Dtype      :", self.trk.pTrkTS.data[0].dtype)
-
-        if self.trk.pTrkTag is not None:
-            print("Tag Dtype            :", self.trk.pTrkTag.data[0].dtype)
-
         self.trk.save(self.export_path)
 
         print("\nSAVE COMPLETE")
 
-
-    def _verify_saved_trk(self):
-
-        print("\n" + "=" * 80)
-        print("VERIFY SAVED TRK")
-        print("=" * 80)
-
-        trk = Trk(self.export_path)
-
-        print("Targets :", trk.ntargets)
-
-        print("Target Array :", len(trk.pTrkiTgt))
-
-        print("Last IDs")
-
-        print(trk.pTrkiTgt[-20:])
-
-        print()
-
-        print("Startframes")
-
-        print(trk.pTrk.startframes[-10:])
-
-        print()
-
-        print("Endframes")
-
-        print(trk.pTrk.endframes[-10:])
-
-        print("=" * 80)
-
-    def _verify_metadata_integrity(self):
-
-        print("=" * 80)
-        print("VERIFY METADATA INTEGRITY")
-        print("=" * 80)
-
-        original = Trk(self.original_trk_path)
-        exported = Trk(self.export_path)
-
-        print("T0              :", original.T0 == exported.T0)
-        print("T               :", original.T == exported.T)
-        print("T1              :", original.T1 == exported.T1)
-
-        print("nlandmarks      :", original.nlandmarks == exported.nlandmarks)
-        print("dimensions      :", original.d == exported.d)
-
-        print("issparse        :", original.issparse == exported.issparse)
-
-        # print("movfile         :", original.movfile == exported.movfile)
-        # print("trxfile         :", original.trxfile == exported.trxfile)
-
-        # print("Skeleton        :", np.array_equal(original.skeleton, exported.skeleton))
-
-        print("=" * 80)
