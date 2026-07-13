@@ -13,7 +13,7 @@ from .services.project_deletion_service import ProjectDeletionService
 from .services.project_upload_service import ProjectUploadService
 from .services.snapshot_builder import SnapshotBuilder
 from .services.snapshot_logger import SnapshotLogger
-from .services.trk_export_service import TrkExportService
+from .services.trk_export_service_v2 import TrkBuilderExportService
 from .services.undo_redo_service import UndoRedoService
 from .services.frame_timeline_service import FrameTimelineService
 
@@ -1163,7 +1163,7 @@ class TrkExportSerializer(serializers.Serializer):
         return value
 
     def export(self):
-        return TrkExportService.export(project_id=self.validated_data["project_id"])
+        return TrkBuilderExportService.export(project_id=self.validated_data["project_id"])
 
 
 
