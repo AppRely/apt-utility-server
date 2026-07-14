@@ -19,6 +19,7 @@ from .services.frame_timeline_service import FrameTimelineService
 from .services.activity_log_export_service import ActivityLogExportService
 from .services.confusion_service import ConfusionTableService
 from .services.trajectory_interpolation_service import TrajectoryInterpolationService
+from .services.break_object_service import BreakObjectService
 
 # =============================
 # PROJECT SERIALIZERS
@@ -629,8 +630,16 @@ class LinkObjectSerializer(serializers.Serializer):
             },
         }
 
-
+################################################
+# Break
+################################################
 class BreakObjectSerializer(serializers.Serializer):
+    """
+    Serializer responsible only for validation.
+
+    Business logic is delegated to BreakObjectService.
+    """
+
     object_id = serializers.IntegerField(required=True)
     break_frame = serializers.IntegerField(required=True)
 
@@ -643,133 +652,98 @@ class BreakObjectSerializer(serializers.Serializer):
     # ---------------------------
     def validate(self, data):
         project_id = self.context["project_id"]
+
+        break_type = self.context.get(
+            "break_type",
+            "after",
+        ).lower()
+
+        if break_type not in ("before", "after"):
+            raise serializers.ValidationError(
+                {
+                    "break_type": "Valid values are 'before' or 'after'."
+                }
+            )
+
         object_id = data["object_id"]
         break_frame = data["break_frame"]
 
-        # 1️ Project validation
-        if not Project.objects.filter(project_id=project_id).exists():
-            raise serializers.ValidationError("Invalid project_id")
-
-        # 2️ Active object validation
-        try:
-            obj_track = ObjectLifecycleService.get_active_object(project_id=project_id, object_id=object_id)
-        except ObjectTrack.DoesNotExist:
-            raise serializers.ValidationError("Active object not found")
-
-        if not (obj_track.start_frame < break_frame < obj_track.end_frame):
+        # ----------------------------------------------------
+        # Project validation
+        # ----------------------------------------------------
+        if not Project.objects.filter(
+            project_id=project_id
+        ).exists():
             raise serializers.ValidationError(
-                f"break_frame must be between {obj_track.start_frame} and {obj_track.end_frame}"
+                "Invalid project_id"
             )
 
-        # 4️ Optional frontend validation
-        if "start_frame" in data and data["start_frame"] != obj_track.start_frame:
-            raise serializers.ValidationError("start_frame mismatch with DB")
+        # ----------------------------------------------------
+        # Active object validation
+        # ----------------------------------------------------
+        try:
+            obj_track = ObjectLifecycleService.get_active_object(
+                project_id=project_id,
+                object_id=object_id,
+            )
 
-        if "end_frame" in data and data["end_frame"] != obj_track.end_frame:
-            raise serializers.ValidationError("end_frame mismatch with DB")
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError(
+                "Active object not found"
+            )
 
-        # Attach DB info
+        # ----------------------------------------------------
+        # Break frame validation
+        # ----------------------------------------------------
+        if not (
+            obj_track.start_frame
+            < break_frame
+            < obj_track.end_frame
+        ):
+            raise serializers.ValidationError(
+                f"break_frame must be between "
+                f"{obj_track.start_frame} "
+                f"and "
+                f"{obj_track.end_frame}"
+            )
+
+        # ----------------------------------------------------
+        # Optional validation
+        # ----------------------------------------------------
+        if (
+            "start_frame" in data
+            and data["start_frame"] != obj_track.start_frame
+        ):
+            raise serializers.ValidationError(
+                "start_frame mismatch with DB"
+            )
+
+        if (
+            "end_frame" in data
+            and data["end_frame"] != obj_track.end_frame
+        ):
+            raise serializers.ValidationError(
+                "end_frame mismatch with DB"
+            )
+
         data["obj_track"] = obj_track
+        data["break_type"] = break_type
 
         return data
 
     def create(self, validated_data):
-        project_id = self.context["project_id"]
+        """
+        Delegate complete business logic
+        to BreakObjectService.
+        """
 
-        object_id = validated_data["object_id"]
-        break_frame = validated_data["break_frame"]
-        obj_track = validated_data["obj_track"]
-        start_frame = obj_track.start_frame
-        end_frame = obj_track.end_frame
-
-        # ---------------------------
-        # SNAPSHOT: BEFORE STATE
-        # ---------------------------
-        before_state = SnapshotBuilder.build(
-            before_qs_map={
-                "FrameObject": FrameObject.objects.filter(
-                    frame__project_id_id=project_id,
-                    object_id=object_id,
-                    frame__frame_no__gte=break_frame,
-                    frame__frame_no__lte=end_frame,
-                ),
-                "ObjectTrack": ObjectTrack.objects.filter(track_id=obj_track.track_id),
-            },
-            after_qs_map={},
+        return BreakObjectService.execute(
+            project_id=self.context["project_id"],
+            object_id=validated_data["object_id"],
+            break_frame=validated_data["break_frame"],
+            break_type=validated_data["break_type"],
+            obj_track=validated_data["obj_track"],
         )
-
-        with transaction.atomic():
-            # Generate new object_id
-            new_object_id = (
-                ObjectTrack.objects.filter(project_id_id=project_id).aggregate(m=Max("object_id"))["m"] or 0
-            ) + 1
-
-            # Update FrameObject (frames AFTER break)
-
-            rows_updated = FrameObject.objects.filter(
-                frame__project_id_id=project_id,
-                frame__frame_no__gte=break_frame,
-                frame__frame_no__lte=end_frame,
-                object_id=object_id,
-            ).update(object_id=new_object_id)
-
-            # Update old object_track
-            obj_track.end_frame = break_frame - 1
-            obj_track.operation_note = f"break_from_{start_frame}_to_{break_frame - 1}"
-            obj_track.save(update_fields=["end_frame", "operation_note"])
-
-            # 4️ Create new object_track
-            new_track = ObjectTrack.objects.create(
-                project_id_id=project_id,
-                object_id=new_object_id,
-                start_frame=break_frame,
-                end_frame=end_frame,
-                object_status=1,
-                operation_note=f"break_from_{break_frame}_to_{end_frame}",
-            )
-
-            # ---------------------------
-            # SNAPSHOT: AFTER STATE
-            # ---------------------------
-            after_state = SnapshotBuilder.build(
-                before_qs_map={},
-                after_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
-                        frame__project_id_id=project_id,
-                        object_id=new_object_id,
-                        frame__frame_no__gte=break_frame,
-                        frame__frame_no__lte=end_frame,
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj_track.track_id, new_track.track_id]),
-                },
-            )
-
-            # ---------------------------
-            # SNAPSHOT LOG
-            # ---------------------------
-            SnapshotLogger.log(
-                project_id=project_id,
-                operation="break_object",
-                before_state=before_state,
-                after_state=after_state,
-                objects_data={
-                    "object_id": object_id,
-                    "object_start": obj_track.start_frame,
-                    "object_end": obj_track.end_frame,
-                    "break_frame": break_frame,
-                    "new_object_id": new_object_id,
-                    "new_object_id_start": new_track.start_frame,
-                    "new_object_id_end": new_track.end_frame,
-                },
-            )
-
-        return {
-            "old_object_id": object_id,
-            "new_object_id": new_object_id,
-            "old_range": f"{start_frame}-{break_frame - 1 }",
-            "new_range": f"{break_frame}-{end_frame}",
-            "rows_updated_in_frame_object": rows_updated,
-        }
 
 
 class SwapObjectSerializer(serializers.Serializer):

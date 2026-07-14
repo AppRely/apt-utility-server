@@ -960,13 +960,16 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
+    #################################
+    # Break api
+    #################################
     @swagger_auto_schema(
         method="post",
         operation_description=(
             "Break an object track into two at a given frame. "
-            "The original object is split into two active objects. "
-            "All operations are performed atomically."
+            "Supports both Break Before and Break After operations. "
+            "The break mode can be specified using the optional "
+            "'break_type' query parameter."
         ),
         request_body=BreakObjectSerializer,
         responses={
@@ -980,23 +983,31 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         POST /api/v1/videos/{project_id}/objects/break/
 
-        Split an object track into two at a specified frame.
+        Optional Query Parameter:
+            break_type:
+                - after (default)
+                - before
 
-        The original object is divided into two active objects, and all
-        related tracking data is updated atomically.
-
-        Args:
-            object_id (int): Identifier of the object to be broken.
-            brake_frame (int): Frame number at which to split the object.
-            start_frame (int): Start frame of the object.
-            end_frame (int): End frame of the object.
-            pk (int): Project identifier.
-
-        Returns:
-            Response: Result of the break operation.
+        Examples:
+            /objects/break/
+            /objects/break/?break_type=after
+            /objects/break/?break_type=before
         """
+
         try:
-            serializer = BreakObjectSerializer(data=request.data, context={"project_id": pk})
+            break_type = request.query_params.get(
+                "break_type",
+                "after",
+            ).lower()
+
+            serializer = BreakObjectSerializer(
+                data=request.data,
+                context={
+                    "project_id": pk,
+                    "break_type": break_type,
+                },
+            )
+
             serializer.is_valid(raise_exception=True)
             result = serializer.save()
 

@@ -160,35 +160,58 @@ class UndoRedoService:
         """
         before_state = snapshot.before_state
         after_state = snapshot.after_state
+        # --------------------------------------
+        # Restore FrameObjects
+        # ---------------------------------------
+        frame_rows = before_state.get("FrameObject", {}).get("deleted", [])
+        for row in frame_rows:
+            pk = row["id"]
+            FrameObject.objects.filter(id=pk).update(**{k: v for k, v in row.items() if k != "id"})
 
-        # 1. Restore FrameObjects (Move back to original ID)
-        # In 'break', before_state['FrameObject']['deleted'] contains the original state
-        fo_ops = before_state.get("FrameObject", {})
-        if fo_ops.get("deleted"):
-            Model = UndoRedoService.MODEL_MAP["FrameObject"]
-            pk = UndoRedoService._get_pk_field(fo_ops["deleted"][0])
-            for row in fo_ops["deleted"]:
-                # Update existing frames back to original object_id
-                Model.objects.filter(**{pk: row[pk]}).update(object_id=row["object_id"])
+        # ---------------------------------------
+        # Restore original ObjectTrack(s)
+        # ---------------------------------------
+        before_tracks = before_state.get(
+            "ObjectTrack",
+            {},
+        ).get(
+            "deleted",
+            [],
+        )
 
-        # 2. Restore original ObjectTrack range
-        ot_ops_before = before_state.get("ObjectTrack", {})
-        if ot_ops_before.get("deleted"):
-            Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
-            pk = UndoRedoService._get_pk_field(ot_ops_before["deleted"][0])
-            for row in ot_ops_before["deleted"]:
-                update_data = {k: v for k, v in row.items() if k != pk}
-                Model.objects.filter(**{pk: row[pk]}).update(**update_data)
+        before_ids = set()
 
-        # 3. Delete the newly created ObjectTrack
-        # The new track is in after_state['ObjectTrack']['created']
-        # but NOT in before_state
-        ot_ops_after = after_state.get("ObjectTrack", {})
-        if ot_ops_after.get("created"):
-            before_ids = {r["track_id"] for r in ot_ops_before.get("deleted", [])}
-            new_tracks = [r["track_id"] for r in ot_ops_after["created"] if r["track_id"] not in before_ids]
-            if new_tracks:
-                ObjectTrack.objects.filter(track_id__in=new_tracks).delete()
+        for row in before_tracks:
+
+            before_ids.add(row["track_id"])
+
+            ObjectTrack.objects.update_or_create(
+                track_id=row["track_id"],
+                defaults={
+                    k: v
+                    for k, v in row.items()
+                    if k != "track_id"
+                },
+            )
+
+        # ---------------------------------------
+        # Delete newly created track(s)
+        # ---------------------------------------
+        after_tracks = after_state.get(
+            "ObjectTrack",
+            {},
+        ).get(
+            "created",
+            [],
+        )
+
+        for row in after_tracks:
+
+            if row["track_id"] not in before_ids:
+
+                ObjectTrack.objects.filter(
+                    track_id=row["track_id"]
+                ).delete()
 
     @staticmethod
     def _redo_break(snapshot):
@@ -200,25 +223,50 @@ class UndoRedoService:
         """
         after_state = snapshot.after_state
 
-        # 1. Update FrameObjects to new ID
-        fo_ops = after_state.get("FrameObject", {})
-        if fo_ops.get("created"):
-            Model = UndoRedoService.MODEL_MAP["FrameObject"]
-            pk = UndoRedoService._get_pk_field(fo_ops["created"][0])
-            for row in fo_ops["created"]:
-                Model.objects.filter(**{pk: row[pk]}).update(object_id=row["object_id"])
+        # ---------------------------------------
+        # Restore FrameObjects
+        # ---------------------------------------
+        frame_rows = after_state.get(
+            "FrameObject",
+            {},
+        ).get(
+            "created",
+            [],
+        )
 
-        # 2. Update/Create ObjectTracks
-        ot_ops = after_state.get("ObjectTrack", {})
-        if ot_ops.get("created"):
-            Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
-            pk = UndoRedoService._get_pk_field(ot_ops["created"][0])
-            for row in ot_ops["created"]:
-                # Use update_or_create or bulk_create with ignore_conflicts
-                # Since we want to ensure the new one is created and old one is updated
-                obj_data = {k: v for k, v in row.items() if k != pk}
-                Model.objects.update_or_create(**{pk: row[pk]}, defaults=obj_data)
+        for row in frame_rows:
 
+            FrameObject.objects.filter(
+                id=row["id"]
+            ).update(
+                **{
+                    k: v
+                    for k, v in row.items()
+                    if k != "id"
+                }
+            )
+
+        # ---------------------------------------
+        # Restore ObjectTracks
+        # ---------------------------------------
+        track_rows = after_state.get(
+            "ObjectTrack",
+            {},
+        ).get(
+            "created",
+            [],
+        )
+
+        for row in track_rows:
+
+            ObjectTrack.objects.update_or_create(
+                track_id=row["track_id"],
+                defaults={
+                    k: v
+                    for k, v in row.items()
+                    if k != "track_id"
+                },
+            )
     @staticmethod
     def _undo_link(snapshot):
         """
@@ -369,7 +417,9 @@ class UndoRedoService:
 
             if op == "delete":
                 UndoRedoService._undo_delete(snapshot)
-            elif op == "break_object":
+            # Keep break_object for activity rows recorded before break modes
+            # were split into break_before and break_after.
+            elif op in ("break_object", "break_before", "break_after"):
                 UndoRedoService._undo_break(snapshot)
             elif op == "link":
                 UndoRedoService._undo_link(snapshot)
@@ -409,7 +459,9 @@ class UndoRedoService:
 
             if op == "delete":
                 UndoRedoService._redo_delete(snapshot)
-            elif op == "break_object":
+            # Keep break_object for activity rows recorded before break modes
+            # were split into break_before and break_after.
+            elif op in ("break_object", "break_before", "break_after"):
                 UndoRedoService._redo_break(snapshot)
             elif op == "link":
                 UndoRedoService._redo_link(snapshot)
