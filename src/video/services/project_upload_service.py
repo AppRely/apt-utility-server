@@ -78,8 +78,10 @@ class ProjectUploadService:
                 project_name=project_name,
                 video_name=os.path.basename(video_path),
                 video_path=video_path,  # temporary
+                video_storage_path=video_path,  # 
                 trk_file_name=os.path.basename(trk_path),
                 trk_file_path=trk_path,
+                trk_storage_path=trk_path,
                 project_status="inprogress",
                 status="Completed",
                 confusion_status="COMPLETED",

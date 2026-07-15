@@ -10,12 +10,13 @@ class Project(models.Model):
 
     video_name = models.CharField(max_length=255, null=True, blank=True)
     video_path = models.TextField(null=True, blank=True)
+    video_storage_path = models.TextField(null=True, blank=True)
     # Status of the project--database status data insert
     status = models.CharField(max_length=50, null=True, blank=True)
 
     trk_file_name = models.CharField(max_length=255, null=True, blank=True)
     trk_file_path = models.TextField(null=True, blank=True)
-
+    trk_storage_path = models.TextField(null=True, blank=True)
     # Video Metadata
     fps = models.FloatField(null=True, blank=True)
     width = models.IntegerField(null=True, blank=True)
