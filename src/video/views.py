@@ -787,12 +787,15 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    ############################
+    #link objects/ overlapping objects
+    ############################
     @swagger_auto_schema(
         method="put",
-        operation_description="Merge object_2 into object_1.",
+        operation_description="Merge or overlap-link object_2 into object_1.",
         request_body=LinkObjectSerializer,
         responses={
-            200: "Objects merged successfully",
+            200: "Objects linked successfully",
             400: "Validation error",
             500: "Internal server error",
         },
@@ -802,27 +805,22 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         PUT /api/v1/videos/{video_id}/link-objects/
 
-        Merge one object into another within a video.
-        The second object is merged into the first, updating all related
-        tracking data accordingly.
-
-        Args:
-            request (Request): Incoming HTTP request containing object
-                merge data in the request body.
-            pk (int): Video identifier.
-        Returns:
-            Response: Result of the merge operation.
+        Link two objects together. Supports both normal link and
+        overlap link operations.
         """
         try:
-            serializer = LinkObjectSerializer(data=request.data, context={"video_id": pk})
+            serializer = LinkObjectSerializer(data=request.data, context={"project_id": pk},)
             serializer.is_valid(raise_exception=True)
 
-            result = serializer.merge_data()
+            result = serializer.save()
 
             return Response(
                 {
                     "status": "success",
-                    "message": "Objects merged successfully",
+                    "message": result.get(
+                        "message",
+                        "Objects linked successfully",
+                    ),
                     "data": result,
                 },
                 status=status.HTTP_200_OK,
@@ -839,7 +837,11 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
         except Exception:
-            logger.error("Error linking objects", exc_info=True)
+            logger.error(
+                "Error linking objects",
+                exc_info=True,
+            )
+
             return Response(
                 {
                     "status": "error",
@@ -847,7 +849,10 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
+    
+    ###################################
+    # Activity Log / Audit Trail
+    ###################################
     @swagger_auto_schema(
         method="post",
         operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",

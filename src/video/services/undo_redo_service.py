@@ -69,6 +69,9 @@ class UndoRedoService:
     # ------------------------------------------------
     # OPERATION-SPECIFIC UNDO / REDO
     # ------------------------------------------------
+    #####################################
+    #Delete
+    #####################################
     @staticmethod
     def _undo_delete(snapshot):
         """
@@ -150,6 +153,10 @@ class UndoRedoService:
                         if update_data:
                             Model.objects.filter(**{pk: pk_val}).update(**update_data)
 
+    
+    ##################################
+    # Break
+    ##################################
     @staticmethod
     def _undo_break(snapshot):
         """
@@ -267,6 +274,10 @@ class UndoRedoService:
                     if k != "track_id"
                 },
             )
+
+    ##############################################################
+    #link
+    ##############################################################
     @staticmethod
     def _undo_link(snapshot):
         """
@@ -331,6 +342,9 @@ class UndoRedoService:
                 update_data = {k: v for k, v in row.items() if k != pk}
                 Model.objects.filter(**{pk: row[pk]}).update(**update_data)
 
+    #######################################################
+    #swap
+    #######################################################
     @staticmethod
     def _undo_swap(snapshot):
         """
@@ -423,6 +437,8 @@ class UndoRedoService:
                 UndoRedoService._undo_break(snapshot)
             elif op == "link":
                 UndoRedoService._undo_link(snapshot)
+            elif op == "overlap":
+                UndoRedoService._undo_overlap(snapshot)
             elif op == "swap":
                 UndoRedoService._undo_swap(snapshot)
             elif activity.operation == "interpolate":
@@ -465,6 +481,8 @@ class UndoRedoService:
                 UndoRedoService._redo_break(snapshot)
             elif op == "link":
                 UndoRedoService._redo_link(snapshot)
+            elif op == "overlap":
+                UndoRedoService._redo_overlap(snapshot)
             elif op == "swap":
                 UndoRedoService._redo_swap(snapshot)
             elif activity.operation == "interpolate":
@@ -599,3 +617,152 @@ class UndoRedoService:
                 object_status=row["object_status"],
                 operation_note=row["operation_note"],
             )
+
+    ########################################
+    #Overlap
+    ########################################
+
+    @staticmethod
+    def _undo_overlap(snapshot):
+        """
+        Undo overlap operation.
+
+        Restores:
+        1. FrameObject object_ids
+        2. ObjectTrack ranges/status
+        """
+
+        before_state = snapshot.before_state
+
+        # ---------------------------------------
+        # Restore FrameObjects
+        # ---------------------------------------
+
+        fo_ops = before_state.get("FrameObject", {})
+
+        if fo_ops.get("deleted"):
+
+            Model = UndoRedoService.MODEL_MAP["FrameObject"]
+
+            pk = UndoRedoService._get_pk_field(
+                fo_ops["deleted"][0]
+            )
+
+            for row in fo_ops["deleted"]:
+
+                pk_val = row[pk]
+
+                update_data = {
+                    k: v
+                    for k, v in row.items()
+                    if k != pk
+                }
+
+                Model.objects.filter(
+                    **{pk: pk_val}
+                ).update(
+                    **update_data
+                )
+
+        # ---------------------------------------
+        # Restore ObjectTracks
+        # ---------------------------------------
+
+        ot_ops = before_state.get("ObjectTrack", {})
+
+        if ot_ops.get("deleted"):
+
+            Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
+
+            pk = UndoRedoService._get_pk_field(
+                ot_ops["deleted"][0]
+            )
+
+            for row in ot_ops["deleted"]:
+
+                pk_val = row[pk]
+
+                update_data = {
+                    k: v
+                    for k, v in row.items()
+                    if k != pk
+                }
+
+                Model.objects.filter(
+                    **{pk: pk_val}
+                ).update(
+                    **update_data
+                )
+
+
+    @staticmethod
+    def _redo_overlap(snapshot):
+        """
+        Redo overlap operation.
+
+        Re-applies:
+        1. FrameObject object_ids
+        2. ObjectTrack ranges/status
+        """
+
+        after_state = snapshot.after_state
+
+        # ---------------------------------------
+        # Restore FrameObjects
+        # ---------------------------------------
+
+        fo_ops = after_state.get("FrameObject", {})
+
+        if fo_ops.get("created"):
+
+            Model = UndoRedoService.MODEL_MAP["FrameObject"]
+
+            pk = UndoRedoService._get_pk_field(
+                fo_ops["created"][0]
+            )
+
+            for row in fo_ops["created"]:
+
+                pk_val = row[pk]
+
+                update_data = {
+                    k: v
+                    for k, v in row.items()
+                    if k != pk
+                }
+
+                Model.objects.filter(
+                    **{pk: pk_val}
+                ).update(
+                    **update_data
+                )
+
+        # ---------------------------------------
+        # Restore ObjectTracks
+        # ---------------------------------------
+
+        ot_ops = after_state.get("ObjectTrack", {})
+
+        if ot_ops.get("created"):
+
+            Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
+
+            pk = UndoRedoService._get_pk_field(
+                ot_ops["created"][0]
+            )
+
+            for row in ot_ops["created"]:
+
+                pk_val = row[pk]
+
+                update_data = {
+                    k: v
+                    for k, v in row.items()
+                    if k != pk
+                }
+
+                Model.objects.filter(
+                    **{pk: pk_val}
+                ).update(
+                    **update_data
+                )

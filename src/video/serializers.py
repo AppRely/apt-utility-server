@@ -20,6 +20,7 @@ from .services.activity_log_export_service import ActivityLogExportService
 from .services.confusion_service import ConfusionTableService
 from .services.trajectory_interpolation_service import TrajectoryInterpolationService
 from .services.break_object_service import BreakObjectService
+from .services.link_object_service import LinkObjectService
 
 # =============================
 # PROJECT SERIALIZERS
@@ -449,188 +450,138 @@ class LinkObjectSerializer(serializers.Serializer):
     object_2_start = serializers.IntegerField(required=True)
     object_2_end = serializers.IntegerField(required=True)
 
+    # Future support
+    operation = serializers.ChoiceField(
+        choices=[
+            "link",
+            "overlap",
+        ],
+        default="link",
+        required=False,
+    )
+
+    preferred_object = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+    )
+
     def validate(self, data):
-        # Use 'project_id' as context key for consistency
-        project_id = self.context.get("project_id") or self.context.get("video_id")
+
+        project_id = self.context.get("project_id")
+
         if not project_id:
             raise serializers.ValidationError("Missing project_id in context.")
 
         if not Project.objects.filter(project_id=project_id).exists():
             raise serializers.ValidationError("Invalid project")
 
-        if data["object_2_start"] > data["object_2_end"]:
-            raise serializers.ValidationError({"object_2_range": "Invalid frame range"})
+        if data["object_1_id"] == data["object_2_id"]:
+            raise serializers.ValidationError(
+                "Object IDs cannot be the same."
+            )
 
         if data["object_1_start"] > data["object_1_end"]:
-            raise serializers.ValidationError({"object_1_range": "Invalid frame range"})
+            raise serializers.ValidationError(
+                {
+                    "object_1_range": "Invalid frame range."
+                }
+            )
 
-        if data["object_1_id"] == data["object_2_id"]:
-            raise serializers.ValidationError("Object IDs cannot be the same.")
+        if data["object_2_start"] > data["object_2_end"]:
+            raise serializers.ValidationError(
+                {
+                    "object_2_range": "Invalid frame range."
+                }
+            )
 
-        if not ObjectTrack.objects.filter(project_id_id=project_id, object_id=data["object_1_id"]).exists():
-            raise serializers.ValidationError({"object_1_id": "Object 1 not found"})
+        try:
 
-        if not ObjectTrack.objects.filter(project_id_id=project_id, object_id=data["object_2_id"]).exists():
-            raise serializers.ValidationError({"object_2_id": "Object 2 not found"})
+            object_1_track = ObjectTrack.objects.get(
+                project_id_id=project_id,
+                object_id=data["object_1_id"],
+            )
 
-        # Fetch obj2_track for lifecycle validation
-        obj2_track = ObjectTrack.objects.get(project_id_id=project_id, object_id=data["object_2_id"])
-        if data["object_2_start"] < obj2_track.start_frame or data["object_2_end"] > obj2_track.end_frame:
-            raise serializers.ValidationError({"object_2_range": "Range outside object_2"})
+        except ObjectTrack.DoesNotExist:
+
+            raise serializers.ValidationError(
+                {
+                    "object_1_id": "Object 1 not found."
+                }
+            )
+
+        try:
+
+            object_2_track = ObjectTrack.objects.get(
+                project_id_id=project_id,
+                object_id=data["object_2_id"],
+            )
+
+        except ObjectTrack.DoesNotExist:
+
+            raise serializers.ValidationError(
+                {
+                    "object_2_id": "Object 2 not found."
+                }
+            )
+
+        if (
+            data["object_2_start"] < object_2_track.start_frame
+            or data["object_2_end"] > object_2_track.end_frame
+        ):
+            raise serializers.ValidationError(
+                {
+                    "object_2_range":
+                        "Range outside object_2 lifecycle."
+                }
+            )
+
+        if (
+            data["object_1_start"] < object_1_track.start_frame
+            or data["object_1_end"] > object_1_track.end_frame
+        ):
+            raise serializers.ValidationError(
+                {
+                    "object_1_range":
+                        "Range outside object_1 lifecycle."
+                }
+            )
+
+        # ------------------------------------------
+        # Overlap validation
+        # ------------------------------------------
+
+        if data.get("operation") == "overlap":
+
+            preferred = data.get("preferred_object")
+
+            if preferred is None:
+                raise serializers.ValidationError(
+                    {
+                        "preferred_object": "preferred_object is required for overlap operation."
+                    }
+                )
+
+            if preferred not in (
+                data["object_1_id"],
+                data["object_2_id"],
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "preferred_object": "Must be object_1_id or object_2_id."
+                    }
+                )
+
+        data["project_id"] = project_id
+        data["object_1_track"] = object_1_track
+        data["object_2_track"] = object_2_track
 
         return data
 
-    def merge_data(self):
-        """
-        Merge object_2 into object_1:
-        - In VideoData: replace object_2_id with object_1_id in the given frame range.
-        - In ObjectTrack: extend object_1 range, mark object_2 as inactive with a 'link' note.
-        """
-        data = self.validated_data
-        project_id = self.context.get("project_id") or self.context.get("video_id")
+    def save(self):
+        return LinkObjectService.execute(
+            **self.validated_data
+        )
 
-        obj1 = data["object_1_id"]
-        obj2 = data["object_2_id"]
-        start2 = data["object_2_start"]
-        end2 = data["object_2_end"]
-
-        # fetch lifecycle rows
-        obj1_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj1)
-
-        obj2_row = ObjectTrack.objects.get(project_id_id=project_id, object_id=obj2)
-
-        with transaction.atomic():
-            # update_map = {
-            #     field: Case(
-            #         When(**{field: obj2}, then=Value(obj1)),
-            #         default=field,
-            #         output_field=IntegerField()
-            #     )
-            #     for field in object_fields
-            # }
-
-            # rows_updated = qs.update(**update_map)
-
-            # obj1_row = ObjectTrack.objects.get(
-            #     project_id_id=project_id,
-            #     object_id=obj1
-            # )
-            # obj2_row = ObjectTrack.objects.get(
-            #     project_id_id=project_id,
-            #     object_id=obj2
-            # )
-
-            # update_map = ObjectSlotAdapter.build_bulk_replace_map(
-            #     old_object_id=obj2,
-            #     new_object_id=obj1,
-            # )
-
-            # rows_updated = qs.update(**update_map)
-
-            # -------------------------------------------------
-            #  Replace object_2 → object_1 in frames
-            # -------------------------------------------------
-
-            # =====================================================
-            # SNAPSHOT — BEFORE (Capture original state)
-            # =====================================================
-            before_state = SnapshotBuilder.build(
-                before_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
-                        frame__project_id_id=project_id,
-                        frame__frame_no__gte=start2,
-                        frame__frame_no__lte=end2,
-                        object_id=obj2,
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_row.track_id, obj2_row.track_id]),
-                },
-                after_qs_map={},  # Empty after_qs_map puts everything in 'deleted'
-            )
-
-            # =====================================================
-            # APPLY LINK OPERATION
-            # =====================================================
-            rows_updated = FrameObject.objects.filter(
-                frame__project_id_id=project_id,
-                object_id=obj2,
-                frame__frame_no__gte=start2,
-                frame__frame_no__lte=end2,
-            ).update(object_id=obj1)
-            if rows_updated == 0:
-                raise serializers.ValidationError("No frames found for object_2 in given range")
-
-            # Extend object_1 lifecycle
-            obj1_row.start_frame = min(obj1_row.start_frame, obj2_row.start_frame)
-            obj1_row.end_frame = max(obj1_row.end_frame, obj2_row.end_frame)
-            obj1_row.object_status = 1
-            obj1_row.operation_note = "link_target"
-
-            obj1_row.save(
-                update_fields=[
-                    "start_frame",
-                    "end_frame",
-                    "object_status",
-                    "operation_note",
-                ]
-            )
-
-            # Deactivate object_2
-            ObjectLifecycleService.deactivate_object(obj2_row, note=f"linked_into_object_{obj1}")
-
-            # =====================================================
-            # SNAPSHOT — AFTER (Capture merged state)
-            # =====================================================
-            after_state = SnapshotBuilder.build(
-                before_qs_map={},  # Empty before_qs_map puts everything in 'created'
-                after_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
-                        frame__project_id_id=project_id,
-                        frame__frame_no__gte=start2,
-                        frame__frame_no__lte=end2,
-                        object_id=obj1,
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_row.track_id, obj2_row.track_id]),
-                },
-            )
-
-            # =====================================================
-            # SNAPSHOT LOG
-            # =====================================================
-            SnapshotLogger.log(
-                project_id=project_id,
-                operation="link",
-                before_state=before_state,
-                after_state=after_state,
-                objects_data={
-                    "object_1_id": obj1,
-                    "object_1_start": obj1_row.start_frame,
-                    "object_1_end": obj1_row.end_frame,
-                    "object_2_id": obj2,
-                    "object_2_start": start2,
-                    "object_2_end": end2,
-                },
-            )
-
-        return {
-            "status": "success",
-            "message": "Objects merged successfully",
-            "video_id": project_id,
-            "rows_updated_main_table": rows_updated,
-            "object_track_object_1": {
-                "object_id": obj1,
-                "start_frame": obj1_row.start_frame,
-                "end_frame": obj1_row.end_frame,
-                "object_status": obj1_row.object_status,
-                "operation_note": obj1_row.operation_note,
-            },
-            "object_track_object_2": {
-                "object_id": obj2,
-                "start_frame": obj2_row.start_frame,
-                "end_frame": obj2_row.end_frame,
-                "object_status": obj2_row.object_status,
-                "operation_note": obj2_row.operation_note,
-            },
-        }
 
 ################################################
 # Break
