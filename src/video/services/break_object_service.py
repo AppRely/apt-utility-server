@@ -196,15 +196,15 @@ class BreakObjectService:
 
         return SnapshotBuilder.build(
             before_qs_map={
-                "FrameObject": FrameObject.objects.filter(
+                "FrameObject": (FrameObject.objects.filter(
                     frame__project_id_id=project_id,
                     object_id=object_id,
                     frame__frame_no__gte=config["frame_move_start"],
                     frame__frame_no__lte=config["frame_move_end"],
-                ),
-                "ObjectTrack": ObjectTrack.objects.filter(
+                ), ("id", "object_id")),
+                "ObjectTrack": (ObjectTrack.objects.filter(
                     track_id=obj_track.track_id,
-                ),
+                ), ("track_id", "start_frame", "end_frame", "operation_note")),
             },
             after_qs_map={},
         )
@@ -308,27 +308,37 @@ class BreakObjectService:
         Capture the database state after the break operation.
         """
 
-        return SnapshotBuilder.build(
+        frame_state = SnapshotBuilder.build(
             before_qs_map={
-                "ObjectTrack": ObjectTrack.objects.filter(
+                "ObjectTrack": (ObjectTrack.objects.filter(
                     track_id=obj_track.track_id
-                ),
+                ), ("track_id", "start_frame", "end_frame", "operation_note")),
             },
             after_qs_map={
-                "FrameObject": FrameObject.objects.filter(
+                "FrameObject": (FrameObject.objects.filter(
                     frame__project_id_id=project_id,
                     object_id=new_object_id,
                     frame__frame_no__gte=config["frame_move_start"],
                     frame__frame_no__lte=config["frame_move_end"],
-                ),
-                "ObjectTrack": ObjectTrack.objects.filter(
-                    track_id__in=[
-                        obj_track.track_id,
-                        new_track.track_id,
-                    ]
-                ),
+                ), ("id", "object_id")),
             },
         )
+        # The old track is only updated, while the new track can need to be
+        # recreated by redo.  Keep the latter complete and the former narrow.
+        frame_state["ObjectTrack"] = {
+            "deleted": [],
+            "updated": [],
+            "created": [
+                {
+                    "track_id": obj_track.track_id,
+                    "start_frame": obj_track.start_frame,
+                    "end_frame": obj_track.end_frame,
+                    "operation_note": obj_track.operation_note,
+                },
+                SnapshotBuilder.capture(ObjectTrack.objects.filter(track_id=new_track.track_id))[0],
+            ],
+        }
+        return frame_state
     
     @classmethod
     def _log_activity(

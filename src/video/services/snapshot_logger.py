@@ -16,8 +16,6 @@
 #             after_state=after_state,
 #         )
 #         return activity
-import json
-
 from django.db import transaction
 
 from ..models import ActivityLog, OperationSnapshot
@@ -26,9 +24,10 @@ from ..models import ActivityLog, OperationSnapshot
 class SnapshotLogger:
     @staticmethod
     def log(project_id, operation, before_state, after_state, objects_data=None):
-        objects_data = json.loads(json.dumps(objects_data or {}))
-        before_state = json.loads(json.dumps(before_state))
-        after_state = json.loads(json.dumps(after_state))
+        # All snapshot producers provide JSONField-compatible primitives.
+        # JSONField performs serialization when writing, so a JSON dump/load
+        # round trip here only duplicates large snapshot payloads in memory.
+        objects_data = objects_data or {}
 
         with transaction.atomic():
             # 1. Clear Redo Stack (any unapplied activities for this project)

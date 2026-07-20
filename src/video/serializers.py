@@ -769,12 +769,12 @@ class SwapObjectSerializer(serializers.Serializer):
             # =====================================================
             before_state = SnapshotBuilder.build(
                 before_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
+                    "FrameObject": (FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         frame__frame_no__gte=swap_start,
                         frame__frame_no__lte=swap_end,
-                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
-                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_track.track_id, obj2_track.track_id]),
+                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)), ("id", "object_id")),
+                    "ObjectTrack": (ObjectTrack.objects.filter(track_id__in=[obj1_track.track_id, obj2_track.track_id]), ("track_id", "start_frame", "end_frame", "operation_note")),
                 },
                 after_qs_map={},  # Empty after_qs_map puts everything in 'deleted'
             )
@@ -824,12 +824,12 @@ class SwapObjectSerializer(serializers.Serializer):
             after_state = SnapshotBuilder.build(
                 before_qs_map={},  # Empty before_qs_map puts everything in 'created'
                 after_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
+                    "FrameObject": (FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         frame__frame_no__gte=swap_start,
                         frame__frame_no__lte=swap_end,
-                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)),
-                    "ObjectTrack": ObjectTrack.objects.filter(track_id__in=[obj1_track.track_id, obj2_track.track_id]),
+                    ).filter(Q(object_id=obj1) | Q(object_id=obj2)), ("id", "object_id")),
+                    "ObjectTrack": (ObjectTrack.objects.filter(track_id__in=[obj1_track.track_id, obj2_track.track_id]), ("track_id", "start_frame", "end_frame", "operation_note")),
                 },
             )
 
@@ -937,16 +937,16 @@ class DeleteObjectSerializer(serializers.Serializer):
             # ---------------------------
             before_state = SnapshotBuilder.build(
                 before_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
+                    "FrameObject": (FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         object_id=object_id,
                         frame__frame_no__gte=start_frame,
                         frame__frame_no__lte=end_frame,
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
+                    ), ("id", "is_active")),
+                    "ObjectTrack": (ObjectTrack.objects.filter(
                         project_id_id=project_id,
                         object_id=object_id,
-                    ),
+                    ), ("track_id", "object_status", "operation_note")),
                 },
                 after_qs_map={},
             )
@@ -967,16 +967,16 @@ class DeleteObjectSerializer(serializers.Serializer):
             after_state = SnapshotBuilder.build(
                 before_qs_map={},
                 after_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
+                    "FrameObject": (FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         object_id=object_id,
                         frame__frame_no__gte=start_frame,
                         frame__frame_no__lte=end_frame,
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
+                    ), ("id", "is_active")),
+                    "ObjectTrack": (ObjectTrack.objects.filter(
                         project_id_id=project_id,
                         object_id=object_id,
-                    ),
+                    ), ("track_id", "object_status", "operation_note")),
                 },
             )
 

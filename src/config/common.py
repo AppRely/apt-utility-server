@@ -17,6 +17,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SITE_URL = os.getenv("SITE_URL", "http://localhost:8000")
 
+# Chunk size for video-operation snapshots and undo/redo writes.  Kept as an
+# environment value so deployments can tune it for their database limits.
+VIDEO_OPERATION_BATCH_SIZE = os.getenv("VIDEO_OPERATION_BATCH_SIZE", "500")
+
 
 INSTALLED_APPS = (
     "django.contrib.auth",

@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import serializers
 
 from ..models import (
@@ -72,18 +73,18 @@ class LinkObjectService:
 
             before_state = SnapshotBuilder.build(
                 before_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
+                    "FrameObject": (FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         frame__frame_no__gte=start2,
                         frame__frame_no__lte=end2,
                         object_id=obj2,
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
+                    ), ("id", "object_id")),
+                    "ObjectTrack": (ObjectTrack.objects.filter(
                         track_id__in=[
                             obj1_row.track_id,
                             obj2_row.track_id,
                         ]
-                    ),
+                    ), ("track_id", "start_frame", "end_frame", "object_status", "operation_note")),
                 },
                 after_qs_map={},
             )
@@ -151,18 +152,18 @@ class LinkObjectService:
             after_state = SnapshotBuilder.build(
                 before_qs_map={},
                 after_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
+                    "FrameObject": (FrameObject.objects.filter(
                         frame__project_id_id=project_id,
                         frame__frame_no__gte=start2,
                         frame__frame_no__lte=end2,
                         object_id=obj1,
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
+                    ), ("id", "object_id")),
+                    "ObjectTrack": (ObjectTrack.objects.filter(
                         track_id__in=[
                             obj1_row.track_id,
                             obj2_row.track_id,
                         ]
-                    ),
+                    ), ("track_id", "start_frame", "end_frame", "object_status", "operation_note")),
                 },
             )
 
@@ -239,21 +240,31 @@ class LinkObjectService:
         loser_track = link_info["loser_track"]
         cls._validate_overlap_case(winner_track, loser_track,)
 
+        moved_frame_filter = Q()
+        if loser_track.start_frame < overlap_start:
+            moved_frame_filter |= Q(
+                frame__frame_no__gte=loser_track.start_frame,
+                frame__frame_no__lt=overlap_start,
+            )
+        if loser_track.end_frame > overlap_end:
+            moved_frame_filter |= Q(
+                frame__frame_no__gt=overlap_end,
+                frame__frame_no__lte=loser_track.end_frame,
+            )
+
         before_state = SnapshotBuilder.build(
             before_qs_map={
-                "FrameObject": FrameObject.objects.filter(
+                "FrameObject": (FrameObject.objects.filter(
                     frame__project_id_id=data["project_id"],
-                    object_id__in=[
-                        winner,
-                        loser,
-                    ],
-                ),
-                "ObjectTrack": ObjectTrack.objects.filter(
+                    object_id=loser,
+                    is_active=True,
+                ).filter(moved_frame_filter), ("id", "object_id")),
+                "ObjectTrack": (ObjectTrack.objects.filter(
                     track_id__in=[
                         winner_track.track_id,
                         loser_track.track_id,
                     ]
-                ),
+                ), ("track_id", "start_frame", "end_frame", "operation_note")),
             },
             after_qs_map={},
         )
@@ -282,22 +293,22 @@ class LinkObjectService:
                 overlap_end=overlap_end,
             )
 
+            moved_frame_ids = [
+                row["id"]
+                for row in before_state["FrameObject"]["deleted"]
+            ]
             after_state = SnapshotBuilder.build(
                 before_qs_map={},
                 after_qs_map={
-                    "FrameObject": FrameObject.objects.filter(
-                        frame__project_id_id=data["project_id"],
-                        object_id__in=[
-                            winner,
-                            loser,
-                        ],
-                    ),
-                    "ObjectTrack": ObjectTrack.objects.filter(
+                    "FrameObject": (FrameObject.objects.filter(
+                        id__in=moved_frame_ids,
+                    ), ("id", "object_id")),
+                    "ObjectTrack": (ObjectTrack.objects.filter(
                         track_id__in=[
                             winner_track.track_id,
                             loser_track.track_id,
                         ]
-                    ),
+                    ), ("track_id", "start_frame", "end_frame", "operation_note")),
                 },
             )
             SnapshotLogger.log(
