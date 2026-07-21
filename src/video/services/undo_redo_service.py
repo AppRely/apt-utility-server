@@ -33,6 +33,13 @@ class UndoRedoService:
             yield values[offset:offset + size]
 
     @staticmethod
+    def _get_snapshot_rows(state: dict, model_name: str) -> list:
+        if not state:
+            return []
+        ops = state.get(model_name, {})
+        return ops.get("deleted", []) + ops.get("created", []) + ops.get("updated", [])
+
+    @staticmethod
     def _field_name(Model, key):
         """Translate a values() FK attname (for example frame_id) to its field."""
         for field in Model._meta.concrete_fields:
@@ -593,94 +600,92 @@ class UndoRedoService:
             UndoRedoService._bulk_update_rows(ObjectTrack, "track_id", rows)
 
     ########################################
-    #Overlap
+    # Overlap
     ########################################
 
     @staticmethod
     def _undo_overlap(snapshot):
         """
-        Undo overlap operation.
-
-        Restores:
-        1. FrameObject object_ids
-        2. ObjectTrack ranges/status
+        Undo overlap operation:
+        1. Restore deleted FrameObjects (re-create ones that were deleted during merge)
+        2. Move FrameObjects back to their original object_id before overlap
+        3. Restore original ObjectTrack start_frame, end_frame, object_status, operation_note
         """
+        before_fo = UndoRedoService._get_snapshot_rows(snapshot.before_state, "FrameObject")
+        before_ot = UndoRedoService._get_snapshot_rows(snapshot.before_state, "ObjectTrack")
 
-        before_state = snapshot.before_state
-
-        # ---------------------------------------
-        # Restore FrameObjects
-        # ---------------------------------------
-
-        fo_ops = before_state.get("FrameObject", {})
-
-        if fo_ops.get("deleted"):
-
+        if before_fo:
             Model = UndoRedoService.MODEL_MAP["FrameObject"]
+            pk = UndoRedoService._get_pk_field(before_fo[0])
 
-            pk = UndoRedoService._get_pk_field(
-                fo_ops["deleted"][0]
-            )
+            # Find FrameObject rows that were physically deleted during merge
+            all_ids = [row[pk] for row in before_fo]
+            existing_ids = set()
+            for batch in UndoRedoService._chunks(all_ids):
+                existing_ids.update(
+                    Model.objects.filter(**{f"{pk}__in": batch}).values_list(pk, flat=True)
+                )
 
-            UndoRedoService._bulk_update_rows(Model, pk, fo_ops["deleted"])
+            missing_rows = [row for row in before_fo if row[pk] not in existing_ids]
 
-        # ---------------------------------------
-        # Restore ObjectTracks
-        # ---------------------------------------
+            # Re-create missing FrameObjects
+            if missing_rows:
+                for batch in UndoRedoService._chunks(missing_rows):
+                    Model.objects.bulk_create(
+                        [Model(**r) for r in batch],
+                        ignore_conflicts=True,
+                        batch_size=SnapshotBuilder.batch_size(),
+                    )
 
-        ot_ops = before_state.get("ObjectTrack", {})
+            # Group by original object_id and bulk update
+            updates = {}
+            for row in before_fo:
+                updates.setdefault(row["object_id"], []).append(row[pk])
 
-        if ot_ops.get("deleted"):
+            for obj_id, pks in updates.items():
+                for batch in UndoRedoService._chunks(pks):
+                    Model.objects.filter(**{f"{pk}__in": batch}).update(object_id=obj_id)
 
+        if before_ot:
             Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
-
-            pk = UndoRedoService._get_pk_field(
-                ot_ops["deleted"][0]
-            )
-
-            UndoRedoService._bulk_update_rows(Model, pk, ot_ops["deleted"])
-
+            pk = UndoRedoService._get_pk_field(before_ot[0])
+            UndoRedoService._bulk_update_rows(Model, pk, before_ot)
 
     @staticmethod
     def _redo_overlap(snapshot):
         """
-        Redo overlap operation.
-
-        Re-applies:
-        1. FrameObject object_ids
-        2. ObjectTrack ranges/status
+        Redo overlap operation:
+        1. Delete FrameObjects that were merged/deleted during overlap
+        2. Reassign active FrameObjects to their post-overlap object_id
+        3. Restore post-overlap ObjectTrack state
         """
+        before_fo = UndoRedoService._get_snapshot_rows(snapshot.before_state, "FrameObject")
+        after_fo = UndoRedoService._get_snapshot_rows(snapshot.after_state, "FrameObject")
+        after_ot = UndoRedoService._get_snapshot_rows(snapshot.after_state, "ObjectTrack")
 
-        after_state = snapshot.after_state
-
-        # ---------------------------------------
-        # Restore FrameObjects
-        # ---------------------------------------
-
-        fo_ops = after_state.get("FrameObject", {})
-
-        if fo_ops.get("created"):
-
+        if before_fo and after_fo:
             Model = UndoRedoService.MODEL_MAP["FrameObject"]
+            pk = UndoRedoService._get_pk_field(before_fo[0])
 
-            pk = UndoRedoService._get_pk_field(
-                fo_ops["created"][0]
-            )
+            before_ids = {row[pk] for row in before_fo}
+            after_ids = {row[pk] for row in after_fo}
 
-            UndoRedoService._bulk_update_rows(Model, pk, fo_ops["created"])
+            # Delete rows that were deleted during overlap merge
+            deleted_ids = list(before_ids - after_ids)
+            if deleted_ids:
+                for batch in UndoRedoService._chunks(deleted_ids):
+                    Model.objects.filter(**{f"{pk}__in": batch}).delete()
 
-        # ---------------------------------------
-        # Restore ObjectTracks
-        # ---------------------------------------
+            # Group by post-overlap object_id and bulk update
+            updates = {}
+            for row in after_fo:
+                updates.setdefault(row["object_id"], []).append(row[pk])
 
-        ot_ops = after_state.get("ObjectTrack", {})
+            for obj_id, pks in updates.items():
+                for batch in UndoRedoService._chunks(pks):
+                    Model.objects.filter(**{f"{pk}__in": batch}).update(object_id=obj_id)
 
-        if ot_ops.get("created"):
-
+        if after_ot:
             Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
-
-            pk = UndoRedoService._get_pk_field(
-                ot_ops["created"][0]
-            )
-
-            UndoRedoService._bulk_update_rows(Model, pk, ot_ops["created"])
+            pk = UndoRedoService._get_pk_field(after_ot[0])
+            UndoRedoService._bulk_update_rows(Model, pk, after_ot)

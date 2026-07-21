@@ -225,6 +225,8 @@ class LinkObjectService:
         """
 
         overlap = data["overlap_info"]
+        overlap_start = overlap["start"]
+        overlap_end = overlap["end"]
 
         if not overlap["has_overlap"]:
             raise serializers.ValidationError(
@@ -238,7 +240,7 @@ class LinkObjectService:
 
         winner_track = link_info["winner_track"]
         loser_track = link_info["loser_track"]
-        cls._validate_overlap_case(winner_track, loser_track,)
+        # cls._validate_overlap_case(winner_track, loser_track,)
 
         moved_frame_filter = Q()
         if loser_track.start_frame < overlap_start:
@@ -252,28 +254,26 @@ class LinkObjectService:
                 frame__frame_no__lte=loser_track.end_frame,
             )
 
-        before_state = SnapshotBuilder.build(
-            before_qs_map={
-                "FrameObject": (FrameObject.objects.filter(
-                    frame__project_id_id=data["project_id"],
-                    object_id=loser,
-                    is_active=True,
-                ).filter(moved_frame_filter), ("id", "object_id")),
-                "ObjectTrack": (ObjectTrack.objects.filter(
-                    track_id__in=[
-                        winner_track.track_id,
-                        loser_track.track_id,
-                    ]
-                ), ("track_id", "start_frame", "end_frame", "operation_note")),
-            },
-            after_qs_map={},
-        )
-        overlap_start = overlap["start"]
-        overlap_end = overlap["end"]
-
-        # Find loser-only frame ranges
         with transaction.atomic():
+            before_state = SnapshotBuilder.build(
+                before_qs_map={
+                    "FrameObject": (FrameObject.objects.filter(
+                            frame__project_id_id=data["project_id"],
+                            object_id__in=[winner, loser],
+                            is_active=True,
+                            ),("id", "frame_id", "object_id", "coordinates", "confidence", "tag", "timestamp","is_active", "is_interpolated",),),
+                    "ObjectTrack": (ObjectTrack.objects.filter(
+                        track_id__in=[
+                            winner_track.track_id,
+                            loser_track.track_id,
+                        ]
+                    ), ("track_id", "start_frame", "end_frame", "object_status", "operation_note")),
+                },
+                after_qs_map={},
+            )
+
             rows_updated = cls._move_non_overlap_frames(
+
                 project_id=data["project_id"],
                 winner=winner,
                 loser=loser,
@@ -281,10 +281,19 @@ class LinkObjectService:
                 overlap_start=overlap_start,
                 overlap_end=overlap_end,
             )
-            if rows_updated == 0:
-                raise serializers.ValidationError(
-                    "No non-overlapping frames found to move."
-                )
+            # if rows_updated == 0:
+            #     raise serializers.ValidationError(
+            #         "No non-overlapping frames found to move."
+            #     )
+            
+            merge_result = cls._merge_overlap_frames(
+                project_id=data["project_id"],
+                winner=winner,
+                loser=loser,
+                overlap_start=overlap_start,
+                overlap_end=overlap_end,
+            )
+
 
             cls._update_overlap_tracks(
                 winner_track=winner_track,
@@ -293,22 +302,24 @@ class LinkObjectService:
                 overlap_end=overlap_end,
             )
 
-            moved_frame_ids = [
-                row["id"]
-                for row in before_state["FrameObject"]["deleted"]
-            ]
+            # moved_frame_ids = [
+            #     row["id"]
+            #     for row in before_state["FrameObject"]["deleted"]
+            # ]
             after_state = SnapshotBuilder.build(
                 before_qs_map={},
                 after_qs_map={
                     "FrameObject": (FrameObject.objects.filter(
-                        id__in=moved_frame_ids,
-                    ), ("id", "object_id")),
+                            frame__project_id_id=data["project_id"],
+                            object_id__in=[winner, loser],
+                            is_active=True,
+                        ),("id", "frame_id", "object_id", "coordinates", "confidence", "tag", "timestamp","is_active", "is_interpolated",),),
                     "ObjectTrack": (ObjectTrack.objects.filter(
                         track_id__in=[
                             winner_track.track_id,
                             loser_track.track_id,
                         ]
-                    ), ("track_id", "start_frame", "end_frame", "operation_note")),
+                    ), ("track_id", "start_frame", "end_frame", "object_status", "operation_note")),
                 },
             )
             SnapshotLogger.log(
@@ -481,21 +492,37 @@ class LinkObjectService:
         )
 
         winner_track.operation_note = "overlap_target"
-
+        winner_track.object_status = 1
         winner_track.save(
             update_fields=[
                 "start_frame",
                 "end_frame",
+                "object_status",
                 "operation_note",
             ]
         )
 
-        if loser_track.start_frame < overlap_start:
-            loser_track.start_frame = overlap_start
+        # Recalculate loser track from remaining FrameObjects
+        remaining_frames = list(
+            FrameObject.objects.filter(
+                frame__project_id_id=winner_track.project_id_id,
+                object_id=loser_track.object_id,
+                is_active=True,
+            ).values_list(
+                "frame__frame_no",
+                flat=True,
+            )
+        )
 
-        if loser_track.end_frame > overlap_end:
-            loser_track.end_frame = overlap_end
+        if not remaining_frames:
+            ObjectLifecycleService.deactivate_object(
+                loser_track,
+                note="overlap_completed",
+            )
+            return
 
+        loser_track.start_frame = min(remaining_frames)
+        loser_track.end_frame = max(remaining_frames)
         loser_track.operation_note = "overlap_remaining"
 
         loser_track.save(
@@ -507,28 +534,107 @@ class LinkObjectService:
         )
 
 
-    @staticmethod
-    def _validate_overlap_case(
-        winner_track,
-        loser_track,
+    # @staticmethod
+    # def _validate_overlap_case(
+    #     winner_track,
+    #     loser_track,
+    # ):
+    #     """
+    #     Allow only partial overlap.
+
+    #     Reject complete containment.
+    #     """
+
+    #     winner_inside_loser = (
+    #         loser_track.start_frame < winner_track.start_frame
+    #         and loser_track.end_frame > winner_track.end_frame
+    #     )
+
+    #     loser_inside_winner = (
+    #         winner_track.start_frame < loser_track.start_frame
+    #         and winner_track.end_frame > loser_track.end_frame
+    #     )
+
+    #     if winner_inside_loser or loser_inside_winner:
+    #         raise serializers.ValidationError(
+    #             "Complete containment overlap is not supported."
+    #         )
+
+
+    @classmethod
+    def _merge_overlap_frames(
+        cls,
+        *,
+        project_id,
+        winner,
+        loser,
+        overlap_start,
+        overlap_end,
     ):
         """
-        Allow only partial overlap.
+        Merge overlap frames.
 
-        Reject complete containment.
+        Rules:
+        1. Winner exists + Loser exists
+        -> Delete loser row.
+
+        2. Winner missing + Loser exists
+        -> Move loser row to winner by updating object_id.
+
+        3. Winner exists + Loser missing
+        -> Nothing.
+
+        Returns:
+            updated_count,
+            deleted_count
         """
 
-        winner_inside_loser = (
-            loser_track.start_frame < winner_track.start_frame
-            and loser_track.end_frame > winner_track.end_frame
-        )
+        winner_rows = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            object_id=winner,
+            is_active=True,
+            frame__frame_no__gte=overlap_start,
+            frame__frame_no__lte=overlap_end,
+        ).only("id", "frame_id")
 
-        loser_inside_winner = (
-            winner_track.start_frame < loser_track.start_frame
-            and winner_track.end_frame > loser_track.end_frame
-        )
+        loser_rows = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            object_id=loser,
+            is_active=True,
+            frame__frame_no__gte=overlap_start,
+            frame__frame_no__lte=overlap_end,
+        ).only("id", "frame_id", "object_id")
 
-        if winner_inside_loser or loser_inside_winner:
-            raise serializers.ValidationError(
-                "Complete containment overlap is not supported."
+        winner_map = {
+            row.frame_id: row
+            for row in winner_rows
+        }
+
+        rows_to_update = []
+        rows_to_delete = []
+
+        for loser_row in loser_rows:
+
+            if loser_row.frame_id in winner_map:
+                rows_to_delete.append(loser_row.id)
+
+            else:
+                loser_row.object_id = winner
+                rows_to_update.append(loser_row)
+
+        if rows_to_update:
+            FrameObject.objects.bulk_update(
+                rows_to_update,
+                ["object_id"],
+                batch_size=1000,
             )
+
+        if rows_to_delete:
+            FrameObject.objects.filter(
+                id__in=rows_to_delete
+            ).delete()
+
+        return {
+            "updated": len(rows_to_update),
+            "deleted": len(rows_to_delete),
+        }
