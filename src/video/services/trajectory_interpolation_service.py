@@ -1,4 +1,4 @@
-from django.db import transaction
+from django.db import connection, transaction
 
 from ..models import (
     FrameObject,
@@ -106,7 +106,6 @@ class TrajectoryInterpolationService:
                 .select_related("frame")
                 .order_by("frame__frame_no")
             )
-            print("ROWS COUNT =", rows.count())
             gaps = []
 
             previous_row = None
@@ -129,7 +128,6 @@ class TrajectoryInterpolationService:
                     )
 
                 previous_row = row
-            print("GAPS =", gaps)
             if not gaps:
 
                 return {
@@ -220,34 +218,41 @@ class TrajectoryInterpolationService:
         # FREEZE BEFORE TRACK SNAPSHOT
         # =====================================
 
-        before_track_snapshot = list(
-            ObjectTrack.objects.filter(
-                track_id=source_track.track_id
-            ).values()
-        )
+        before_track_snapshot = SnapshotBuilder.capture((
+            ObjectTrack.objects.filter(track_id=source_track.track_id),
+            ("track_id", "end_frame"),
+        ))
         total_steps = (
             target_start_frame
             -
             source_end_frame
         )
 
-        for frame_no in range(
-            source_end_frame + 1,
-            target_start_frame,
-        ):
-
-            frame = VideoFrame.objects.get(
+        frame_numbers = range(source_end_frame + 1, target_start_frame)
+        frames_by_number = dict(
+            VideoFrame.objects.filter(
                 project_id_id=project_id,
-                frame_no=frame_no,
-            )
-
-            exists = FrameObject.objects.filter(
-                frame=frame,
+                frame_no__in=frame_numbers,
+            ).values_list("frame_no", "id")
+        )
+        existing_frame_ids = set(
+            FrameObject.objects.filter(
+                frame_id__in=list(frames_by_number.values()),
                 object_id=source_object_id,
-                is_active=True, 
-            ).exists()
-
-            if exists:
+                is_active=True,
+            ).values_list("frame_id", flat=True)
+        )
+        rows_to_create = []
+        for frame_no in frame_numbers:
+            frame_id = frames_by_number.get(frame_no)
+            if frame_id is None:
+                # Preserve the original DoesNotExist behaviour for malformed
+                # projects with a missing VideoFrame.
+                frame_id = VideoFrame.objects.get(
+                    project_id_id=project_id,
+                    frame_no=frame_no,
+                ).id
+            if frame_id in existing_frame_ids:
                 continue
 
             step = (
@@ -263,8 +268,8 @@ class TrajectoryInterpolationService:
                 step,
             )
 
-            created = FrameObject.objects.create(
-                frame=frame,
+            rows_to_create.append(FrameObject(
+                frame_id=frame_id,
                 object_id=source_object_id,
                 coordinates=coordinates,
                 confidence=source_row.confidence,
@@ -272,14 +277,22 @@ class TrajectoryInterpolationService:
                 timestamp=source_row.timestamp,
                 is_active=True,
                 is_interpolated=True,
-            )
-            print(
-                "CREATED",
-                frame_no,
-                source_object_id,
-            )
+            ))
 
-            created_frame_ids.append(created.pk)
+        if rows_to_create:
+            # Modern Django backends return primary keys from bulk inserts.  A
+            # row-by-row fallback retains snapshot correctness on backends
+            # that cannot return them.
+            if connection.features.can_return_rows_from_bulk_insert:
+                FrameObject.objects.bulk_create(
+                    rows_to_create,
+                    batch_size=SnapshotBuilder.batch_size(),
+                )
+                created_frame_ids = [row.pk for row in rows_to_create]
+            else:
+                for row in rows_to_create:
+                    row.save(force_insert=True)
+                    created_frame_ids.append(row.pk)
 
         # =====================================
         # UPDATE TRACK
@@ -288,10 +301,7 @@ class TrajectoryInterpolationService:
 
             if source_object_id == target_object_id:
 
-                target_track = ObjectTrack.objects.get(
-                    project_id_id=project_id,
-                    object_id=target_object_id,
-                )
+                target_track = source_track
 
                 source_track.end_frame = (
                     target_track.end_frame
@@ -307,10 +317,6 @@ class TrajectoryInterpolationService:
                 update_fields=["end_frame"]
             )        
         
-        db_track = ObjectTrack.objects.get(
-            track_id=source_track.track_id
-        )
-
         # print(
         #     "[INTERPOLATE] DB Track AFTER update:",
         #     {
@@ -321,11 +327,10 @@ class TrajectoryInterpolationService:
         # FREEZE AFTER TRACK SNAPSHOT
         # =====================================
 
-        after_track_snapshot = list(
-            ObjectTrack.objects.filter(
-                track_id=source_track.track_id
-            ).values()
-        )
+        after_track_snapshot = SnapshotBuilder.capture((
+            ObjectTrack.objects.filter(track_id=source_track.track_id),
+            ("track_id", "end_frame"),
+        ))
         # print(
         #     "[INTERPOLATE] AFTER SNAPSHOT=%s",
         #     after_track_snapshot,

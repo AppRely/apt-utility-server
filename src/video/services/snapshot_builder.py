@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db.models.query import QuerySet
 
 
@@ -7,13 +8,36 @@ class SnapshotBuilder:
     Handles models with custom primary keys.
     """
 
+    DEFAULT_BATCH_SIZE = 500
+
+    @classmethod
+    def batch_size(cls):
+        """Return the shared, bounded batch size used for snapshot reads."""
+        value = getattr(settings, "VIDEO_OPERATION_BATCH_SIZE", cls.DEFAULT_BATCH_SIZE)
+        try:
+            return max(1, int(value))
+        except (TypeError, ValueError):
+            return cls.DEFAULT_BATCH_SIZE
+
     @staticmethod
     def capture(data):
+        """
+        Materialize a snapshot source.
+
+        A source can be a QuerySet (legacy full-row behaviour) or a
+        ``(QuerySet, fields)`` pair.  The latter is used by operations that
+        only need a small set of mutable columns for undo/redo.
+        """
         if data is None:
             return []
 
+        fields = None
+        if isinstance(data, tuple):
+            data, fields = data
+
         if isinstance(data, QuerySet):
-            return list(data.values())
+            values_qs = data.values(*fields) if fields else data.values()
+            return list(values_qs.iterator(chunk_size=SnapshotBuilder.batch_size()))
 
         if isinstance(data, list):
             return data

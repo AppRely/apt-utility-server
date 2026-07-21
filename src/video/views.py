@@ -16,9 +16,11 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from .services.activity_log_export_service import ActivityLogExportService
 
 from .models import Project, VideoFrame
 from .serializers import (
+    ActivityLogExportSerializer,
     ActivityLogRequestSerializer,
     ActivityLogSerializer,
     BreakObjectSerializer,
@@ -785,12 +787,15 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+    ############################
+    #link objects/ overlapping objects
+    ############################
     @swagger_auto_schema(
         method="put",
-        operation_description="Merge object_2 into object_1.",
+        operation_description="Merge or overlap-link object_2 into object_1.",
         request_body=LinkObjectSerializer,
         responses={
-            200: "Objects merged successfully",
+            200: "Objects linked successfully",
             400: "Validation error",
             500: "Internal server error",
         },
@@ -800,27 +805,22 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         PUT /api/v1/videos/{video_id}/link-objects/
 
-        Merge one object into another within a video.
-        The second object is merged into the first, updating all related
-        tracking data accordingly.
-
-        Args:
-            request (Request): Incoming HTTP request containing object
-                merge data in the request body.
-            pk (int): Video identifier.
-        Returns:
-            Response: Result of the merge operation.
+        Link two objects together. Supports both normal link and
+        overlap link operations.
         """
         try:
-            serializer = LinkObjectSerializer(data=request.data, context={"video_id": pk})
+            serializer = LinkObjectSerializer(data=request.data, context={"project_id": pk},)
             serializer.is_valid(raise_exception=True)
 
-            result = serializer.merge_data()
+            result = serializer.save()
 
             return Response(
                 {
                     "status": "success",
-                    "message": "Objects merged successfully",
+                    "message": result.get(
+                        "message",
+                        "Objects linked successfully",
+                    ),
                     "data": result,
                 },
                 status=status.HTTP_200_OK,
@@ -837,7 +837,11 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
         except Exception:
-            logger.error("Error linking objects", exc_info=True)
+            logger.error(
+                "Error linking objects",
+                exc_info=True,
+            )
+
             return Response(
                 {
                     "status": "error",
@@ -845,7 +849,10 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
+    
+    ###################################
+    # Activity Log / Audit Trail
+    ###################################
     @swagger_auto_schema(
         method="post",
         operation_description="Create an activity log entry. Each operation creates a new row in audit trail.",
@@ -958,13 +965,16 @@ class VideoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
+    #################################
+    # Break api
+    #################################
     @swagger_auto_schema(
         method="post",
         operation_description=(
             "Break an object track into two at a given frame. "
-            "The original object is split into two active objects. "
-            "All operations are performed atomically."
+            "Supports both Break Before and Break After operations. "
+            "The break mode can be specified using the optional "
+            "'break_type' query parameter."
         ),
         request_body=BreakObjectSerializer,
         responses={
@@ -978,23 +988,31 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         POST /api/v1/videos/{project_id}/objects/break/
 
-        Split an object track into two at a specified frame.
+        Optional Query Parameter:
+            break_type:
+                - after (default)
+                - before
 
-        The original object is divided into two active objects, and all
-        related tracking data is updated atomically.
-
-        Args:
-            object_id (int): Identifier of the object to be broken.
-            brake_frame (int): Frame number at which to split the object.
-            start_frame (int): Start frame of the object.
-            end_frame (int): End frame of the object.
-            pk (int): Project identifier.
-
-        Returns:
-            Response: Result of the break operation.
+        Examples:
+            /objects/break/
+            /objects/break/?break_type=after
+            /objects/break/?break_type=before
         """
+
         try:
-            serializer = BreakObjectSerializer(data=request.data, context={"project_id": pk})
+            break_type = request.query_params.get(
+                "break_type",
+                "after",
+            ).lower()
+
+            serializer = BreakObjectSerializer(
+                data=request.data,
+                context={
+                    "project_id": pk,
+                    "break_type": break_type,
+                },
+            )
+
             serializer.is_valid(raise_exception=True)
             result = serializer.save()
 
@@ -1904,3 +1922,83 @@ class VideoViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+        
+    #####################################
+    # Activity Log Export API
+    #####################################
+    @swagger_auto_schema(
+        operation_description="Export applied activity logs as a CSV file.",
+        manual_parameters=[
+            openapi.Parameter(
+                "project_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+                description="Project ID",
+            ),
+        ],
+        responses={
+            200: "CSV file",
+            400: "Validation error",
+            404: "No activity logs found",
+            500: "Server error",
+        },
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="activity/logs/export",
+    )
+    def export_activity_logs(self, request):
+        """
+        GET /api/v1/videos/activity/logs/export?project_id=<project_id>
+
+        Export currently applied activity logs.
+        """
+
+        try:
+            serializer = ActivityLogExportSerializer(
+                data=request.query_params
+            )
+
+            serializer.is_valid(raise_exception=True)
+
+            project_id = serializer.validated_data["project_id"]
+
+            return ActivityLogExportService.export(project_id)
+
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid query parameters.",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except ValueError as exc:
+            return Response(
+                {
+                    "status": "error",
+                    "message": str(exc),
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except Exception:
+            logger.error(
+                "Error exporting activity logs.",
+                exc_info=True,
+            )
+
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        "An unexpected error occurred while "
+                        "exporting activity logs."
+                    ),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
