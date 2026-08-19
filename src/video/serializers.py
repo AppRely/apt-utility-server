@@ -1,4 +1,5 @@
 import json
+import os
 
 from django.db import transaction
 from django.db.models import Exists, Max, OuterRef, Q, Min, Count, Subquery
@@ -55,6 +56,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     """
     Serializer for listing projects with essential fields.
     """
+    video_name = serializers.SerializerMethodField()
+    trk_file_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -78,6 +81,35 @@ class ProjectSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def get_video_name(self, obj):
+        filename = obj.video_name
+
+        # Remove "_converted" first
+        base, ext = os.path.splitext(filename)
+
+        if base.endswith("_converted"):
+            base = base[:-10]
+
+        # Remove generated UUID
+        parts = base.rsplit("_", 1)
+
+        if len(parts) == 2 and len(parts[1]) == 8:
+            base = parts[0]
+
+        return f"{base}{ext}"
+
+    def get_trk_file_name(self, obj):
+        filename = obj.trk_file_name
+
+        base, ext = os.path.splitext(filename)
+
+        # Remove generated UUID
+        parts = base.rsplit("_", 1)
+
+        if len(parts) == 2 and len(parts[1]) == 8:
+            base = parts[0]
+
+        return f"{base}{ext}"
 
 class DeleteProjectSerializer(serializers.Serializer):
     """
