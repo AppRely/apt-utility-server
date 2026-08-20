@@ -24,6 +24,7 @@ from .serializers import (
     ActivityLogRequestSerializer,
     ActivityLogSerializer,
     BreakObjectSerializer,
+    ClipObjectSerializer,
     DeleteObjectSerializer,
     DeleteProjectSerializer,
     FrameInfoSerializer,
@@ -1041,6 +1042,49 @@ class VideoViewSet(viewsets.ModelViewSet):
                 {
                     "status": "error",
                     "message": "Something went wrong while breaking the object.",
+                    "errors": str(e),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description="Clip a frame interval into a new object without changing the original track range.",
+        request_body=ClipObjectSerializer,
+        responses={200: "Object clipped successfully", 400: "Validation error", 500: "Internal server error"},
+    )
+    @action(detail=True, methods=["post"], url_path="clip-object")
+    def clip_object(self, request, pk=None):
+        try:
+            serializer = ClipObjectSerializer(
+                data=request.data,
+                context={"project_id": pk},
+            )
+            serializer.is_valid(raise_exception=True)
+            result = serializer.save()
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Object clipped successfully.",
+                    **result,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except serializers.ValidationError as ve:
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid input data",
+                    "errors": ve.detail,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error("Error during clip operation: %s", str(e), exc_info=True)
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Something went wrong while clipping the object.",
                     "errors": str(e),
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
