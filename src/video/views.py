@@ -42,6 +42,10 @@ from .serializers import (
     FrameConfusionRowSerializer,
     FrameTimelineSerializer,
     InterpolateTrajectorySerializer,
+    NextBreakRequestSerializer,
+    NextBreakResponseSerializer,
+    TrajectoryMatchingRequestSerializer,
+    TrajectoryMatchingResponseSerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -1964,6 +1968,68 @@ class VideoViewSet(viewsets.ModelViewSet):
                 "status": "success",
                 "data": result,
             },
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        operation_description="Return the next continuous runtime break for one trajectory.",
+        manual_parameters=[
+            openapi.Parameter(
+                "object_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+            ),
+            openapi.Parameter(
+                "current_frame",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+            ),
+        ],
+        responses={200: NextBreakResponseSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="next-break",
+    )
+    def next_break(self, request, pk=None):
+        serializer = NextBreakRequestSerializer(
+            data=request.query_params,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = NextBreakResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description=(
+            "Rank trajectories that are the most likely continuation around a runtime break."
+        ),
+        request_body=TrajectoryMatchingRequestSerializer,
+        responses={200: TrajectoryMatchingResponseSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="trajectory-linking-suggestions",
+    )
+    def trajectory_linking_suggestions(self, request, pk=None):
+        serializer = TrajectoryMatchingRequestSerializer(
+            data=request.data,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = TrajectoryMatchingResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
             status=status.HTTP_200_OK,
         )
         
