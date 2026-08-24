@@ -294,6 +294,31 @@ class UndoRedoService:
 
         UndoRedoService._bulk_upsert_rows(ObjectTrack, "track_id", track_rows)
 
+    ##################################
+    # Clip
+    ##################################
+    @staticmethod
+    def _undo_clip(snapshot):
+        """Move clipped frames back and remove only the newly created track."""
+        frame_rows = snapshot.before_state.get("FrameObject", {}).get("deleted", [])
+        if frame_rows:
+            UndoRedoService._bulk_update_rows(FrameObject, "id", frame_rows)
+
+        new_tracks = snapshot.after_state.get("ObjectTrack", {}).get("created", [])
+        track_ids = [row["track_id"] for row in new_tracks]
+        for batch in UndoRedoService._chunks(track_ids):
+            ObjectTrack.objects.filter(track_id__in=batch).delete()
+
+    @staticmethod
+    def _redo_clip(snapshot):
+        """Reapply clipped frame IDs and recreate the clipped track."""
+        frame_rows = snapshot.after_state.get("FrameObject", {}).get("created", [])
+        if frame_rows:
+            UndoRedoService._bulk_update_rows(FrameObject, "id", frame_rows)
+
+        new_tracks = snapshot.after_state.get("ObjectTrack", {}).get("created", [])
+        UndoRedoService._bulk_upsert_rows(ObjectTrack, "track_id", new_tracks)
+
     ##############################################################
     #link
     ##############################################################
@@ -450,6 +475,8 @@ class UndoRedoService:
             # were split into break_before and break_after.
             elif op in ("break_object", "break_before", "break_after"):
                 UndoRedoService._undo_break(snapshot)
+            elif op == "clip":
+                UndoRedoService._undo_clip(snapshot)
             elif op == "link":
                 UndoRedoService._undo_link(snapshot)
             elif op == "overlap":
@@ -494,6 +521,8 @@ class UndoRedoService:
             # were split into break_before and break_after.
             elif op in ("break_object", "break_before", "break_after"):
                 UndoRedoService._redo_break(snapshot)
+            elif op == "clip":
+                UndoRedoService._redo_clip(snapshot)
             elif op == "link":
                 UndoRedoService._redo_link(snapshot)
             elif op == "overlap":

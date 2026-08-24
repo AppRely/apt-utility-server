@@ -1,10 +1,11 @@
 import json
+import os
 
 from django.db import transaction
 from django.db.models import Exists, Max, OuterRef, Q, Min, Count, Subquery
 from rest_framework import serializers
 
-from .models import ActivityLog, FrameObject, ObjectTrack, Project,FrameConfusion
+from .models import ActivityLog, FrameObject, ObjectTrack, Project, VideoFrame, FrameConfusion
 from .services.frame_info_service import FrameInfoService
 from .services.frame_object_range_no_fallback_service import FrameObjectRangeNoFallbackService
 from .services.frame_object_range_service import FrameObjectRangeService
@@ -20,6 +21,7 @@ from .services.activity_log_export_service import ActivityLogExportService
 from .services.confusion_service import ConfusionTableService
 from .services.trajectory_interpolation_service import TrajectoryInterpolationService
 from .services.break_object_service import BreakObjectService
+from .services.clip_object_service import ClipObjectService
 from .services.link_object_service import LinkObjectService
 
 # =============================
@@ -55,6 +57,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     """
     Serializer for listing projects with essential fields.
     """
+    video_name = serializers.SerializerMethodField()
+    trk_file_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -78,6 +82,35 @@ class ProjectSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
+    def get_video_name(self, obj):
+        filename = obj.video_name
+
+        # Remove "_converted" first
+        base, ext = os.path.splitext(filename)
+
+        if base.endswith("_converted"):
+            base = base[:-10]
+
+        # Remove generated UUID
+        parts = base.rsplit("_", 1)
+
+        if len(parts) == 2 and len(parts[1]) == 8:
+            base = parts[0]
+
+        return f"{base}{ext}"
+
+    def get_trk_file_name(self, obj):
+        filename = obj.trk_file_name
+
+        base, ext = os.path.splitext(filename)
+
+        # Remove generated UUID
+        parts = base.rsplit("_", 1)
+
+        if len(parts) == 2 and len(parts[1]) == 8:
+            base = parts[0]
+
+        return f"{base}{ext}"
 
 class DeleteProjectSerializer(serializers.Serializer):
     """
@@ -695,6 +728,73 @@ class BreakObjectSerializer(serializers.Serializer):
             object_id=validated_data["object_id"],
             break_frame=validated_data["break_frame"],
             break_type=validated_data["break_type"],
+            obj_track=validated_data["obj_track"],
+        )
+
+
+class ClipObjectSerializer(serializers.Serializer):
+    """Validate a request to move a frame interval to a new object ID."""
+
+    object_id = serializers.IntegerField(required=True)
+    start_frame = serializers.IntegerField(required=True)
+    end_frame = serializers.IntegerField(required=True)
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError("Invalid project_id")
+
+        try:
+            obj_track = ObjectLifecycleService.get_active_object(
+                project_id=project_id,
+                object_id=data["object_id"],
+            )
+        except ObjectTrack.DoesNotExist:
+            raise serializers.ValidationError("Active object not found")
+
+        start_frame = data["start_frame"]
+        end_frame = data["end_frame"]
+        if start_frame > end_frame:
+            raise serializers.ValidationError(
+                {"end_frame": "end_frame must be greater than or equal to start_frame."}
+            )
+        if start_frame < obj_track.start_frame or end_frame > obj_track.end_frame:
+            raise serializers.ValidationError(
+                {
+                    "clip_range": (
+                        f"Clip range must be between {obj_track.start_frame} "
+                        f"and {obj_track.end_frame}."
+                    )
+                }
+            )
+
+        project_frames = VideoFrame.objects.filter(
+            project_id_id=project_id,
+            frame_no__gte=start_frame,
+            frame_no__lte=end_frame,
+        )
+        if project_frames.count() != end_frame - start_frame + 1:
+            raise serializers.ValidationError(
+                {"clip_range": "The selected frame range does not belong to the project."}
+            )
+        if not FrameObject.objects.filter(
+            frame_id__in=project_frames.values("id"),
+            object_id=data["object_id"],
+            is_active=True,
+        ).exists():
+            raise serializers.ValidationError(
+                {"clip_range": "No active object rows found in the selected range."}
+            )
+
+        data["obj_track"] = obj_track
+        return data
+
+    def create(self, validated_data):
+        return ClipObjectService.execute(
+            project_id=self.context["project_id"],
+            object_id=validated_data["object_id"],
+            start_frame=validated_data["start_frame"],
+            end_frame=validated_data["end_frame"],
             obj_track=validated_data["obj_track"],
         )
 
