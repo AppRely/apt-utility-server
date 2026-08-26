@@ -25,6 +25,7 @@ from .services.clip_object_service import ClipObjectService
 from .services.link_object_service import LinkObjectService
 from .services.next_break_service import NextBreakService
 from .services.trajectory_matching_service import TrajectoryMatchingService
+from .services.trajectory_clip_suggestion_service import TrajectoryClipSuggestionService
 
 # =============================
 # PROJECT SERIALIZERS
@@ -1654,6 +1655,79 @@ class TrajectoryMatchingResponseSerializer(serializers.Serializer):
     break_start = serializers.IntegerField()
     break_end = serializers.IntegerField()
     suggestions = TrajectorySuggestionSerializer(many=True)
+
+
+class TrajectoryClipSuggestionRequestSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(min_value=0)
+    start_frame = serializers.IntegerField(required=False, min_value=0)
+    end_frame = serializers.IntegerField(required=False, min_value=0)
+    limit = serializers.IntegerField(
+        required=False,
+        default=TrajectoryClipSuggestionService.DEFAULT_LIMIT,
+        min_value=1,
+        max_value=20,
+        write_only=True,
+    )
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        track = ObjectTrack.objects.filter(
+            project_id_id=project_id,
+            object_id=data["object_id"],
+            object_status=1,
+        ).first()
+        if track is None:
+            raise serializers.ValidationError(
+                {"object_id": "Active object does not exist in this project."}
+            )
+
+        start_frame = data.get("start_frame", track.start_frame)
+        end_frame = data.get("end_frame", track.end_frame)
+        if start_frame > end_frame:
+            raise serializers.ValidationError(
+                {"end_frame": "end_frame must be greater than or equal to start_frame."}
+            )
+        if start_frame < track.start_frame or end_frame > track.end_frame:
+            raise serializers.ValidationError(
+                {
+                    "frame_range": (
+                        f"Range must be between {track.start_frame} "
+                        f"and {track.end_frame}."
+                    )
+                }
+            )
+
+        data["start_frame"] = start_frame
+        data["end_frame"] = end_frame
+        return data
+
+    def get_data(self):
+        return TrajectoryClipSuggestionService().suggest(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class ClipIntervalSuggestionSerializer(serializers.Serializer):
+    start_frame = serializers.IntegerField()
+    end_frame = serializers.IntegerField()
+    peak_frame = serializers.IntegerField()
+    score = serializers.FloatField(min_value=0.0, max_value=1.0)
+    peak_movement = serializers.FloatField(min_value=0.0)
+    reason = serializers.ChoiceField(choices=("movement_spike",))
+
+
+class TrajectoryClipSuggestionResponseSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    object_id = serializers.IntegerField()
+    analyzed_range = serializers.DictField(
+        child=serializers.IntegerField(min_value=0)
+    )
+    baseline_movement = serializers.FloatField(allow_null=True, min_value=0.0)
+    suggestions = ClipIntervalSuggestionSerializer(many=True)
 
 
 

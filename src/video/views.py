@@ -46,6 +46,8 @@ from .serializers import (
     NextBreakResponseSerializer,
     TrajectoryMatchingRequestSerializer,
     TrajectoryMatchingResponseSerializer,
+    TrajectoryClipSuggestionRequestSerializer,
+    TrajectoryClipSuggestionResponseSerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -2028,6 +2030,33 @@ class VideoViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         result = serializer.get_data()
         response_data = TrajectoryMatchingResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description=(
+            "Suggest clip intervals where an object's movement differs "
+            "significantly from its normal trajectory."
+        ),
+        request_body=TrajectoryClipSuggestionRequestSerializer,
+        responses={200: TrajectoryClipSuggestionResponseSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="trajectory-clip-suggestions",
+    )
+    def trajectory_clip_suggestions(self, request, pk=None):
+        serializer = TrajectoryClipSuggestionRequestSerializer(
+            data=request.data,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = TrajectoryClipSuggestionResponseSerializer(result).data
         return Response(
             {"status": "success", "data": response_data},
             status=status.HTTP_200_OK,
