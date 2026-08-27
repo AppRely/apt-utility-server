@@ -26,6 +26,8 @@ from .services.link_object_service import LinkObjectService
 from .services.next_break_service import NextBreakService
 from .services.trajectory_matching_service import TrajectoryMatchingService
 from .services.trajectory_clip_suggestion_service import TrajectoryClipSuggestionService
+from .services.trajectory_gap_service import TrajectoryGapService
+from .services.trajectory_length_service import TrajectoryLengthService
 
 # =============================
 # PROJECT SERIALIZERS
@@ -1729,6 +1731,108 @@ class TrajectoryClipSuggestionResponseSerializer(serializers.Serializer):
     baseline_movement = serializers.FloatField(allow_null=True, min_value=0.0)
     suggestions = ClipIntervalSuggestionSerializer(many=True)
 
+
+class TrajectoryGapRequestSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(min_value=0)
+    min_gap = serializers.IntegerField(
+        required=False,
+        default=TrajectoryGapService.DEFAULT_MIN_GAP,
+        min_value=TrajectoryGapService.DEFAULT_MIN_GAP,
+    )
+    limit = serializers.IntegerField(
+        required=False,
+        default=TrajectoryGapService.DEFAULT_LIMIT,
+        min_value=1,
+        max_value=100,
+    )
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        if not FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            object_id=data["object_id"],
+            is_active=True,
+        ).exists():
+            raise serializers.ValidationError(
+                {"object_id": "Object has no active trajectory data."}
+            )
+        return data
+
+    def get_data(self):
+        return TrajectoryGapService.find(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class TrajectoryGapSerializer(serializers.Serializer):
+    start_frame = serializers.IntegerField()
+    end_frame = serializers.IntegerField()
+    gap = serializers.IntegerField(min_value=2)
+
+
+class TrajectoryGapResponseSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    object_id = serializers.IntegerField()
+    largest_gap = TrajectoryGapSerializer(allow_null=True)
+    gaps = TrajectoryGapSerializer(many=True)
+
+
+class TrajectoryLengthRequestSerializer(serializers.Serializer):
+    ordering = serializers.ChoiceField(
+        required=False,
+        default=TrajectoryLengthService.ORDER_LONGEST_FIRST,
+        choices=(
+            TrajectoryLengthService.ORDER_LONGEST_FIRST,
+            TrajectoryLengthService.ORDER_SHORTEST_FIRST,
+        ),
+    )
+    min_length = serializers.IntegerField(required=False, min_value=1)
+    max_length = serializers.IntegerField(required=False, min_value=1)
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        min_length = data.get("min_length")
+        max_length = data.get("max_length")
+        if (
+            min_length is not None
+            and max_length is not None
+            and min_length > max_length
+        ):
+            raise serializers.ValidationError(
+                {"max_length": "max_length must be greater than or equal to min_length."}
+            )
+        return data
+
+    def get_data(self):
+        return TrajectoryLengthService.list(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class TrajectoryLengthSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField()
+    first_frame = serializers.IntegerField()
+    last_frame = serializers.IntegerField()
+    length = serializers.IntegerField(min_value=1)
+
+
+class TrajectoryLengthResponseSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    ordering = serializers.ChoiceField(
+        choices=(
+            TrajectoryLengthService.ORDER_LONGEST_FIRST,
+            TrajectoryLengthService.ORDER_SHORTEST_FIRST,
+        )
+    )
+    trajectories = TrajectoryLengthSerializer(many=True)
 
 
 ###########################################
