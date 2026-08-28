@@ -23,6 +23,11 @@ from .services.trajectory_interpolation_service import TrajectoryInterpolationSe
 from .services.break_object_service import BreakObjectService
 from .services.clip_object_service import ClipObjectService
 from .services.link_object_service import LinkObjectService
+from .services.next_break_service import NextBreakService
+from .services.trajectory_matching_service import TrajectoryMatchingService
+from .services.trajectory_clip_suggestion_service import TrajectoryClipSuggestionService
+from .services.trajectory_gap_service import TrajectoryGapService
+from .services.trajectory_length_service import TrajectoryLengthService
 
 # =============================
 # PROJECT SERIALIZERS
@@ -1522,6 +1527,312 @@ class InterpolateTrajectorySerializer(serializers.Serializer):
             )
         )
 
+
+class NextBreakRequestSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(min_value=0)
+    current_frame = serializers.IntegerField(min_value=0)
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        if not VideoFrame.objects.filter(
+            project_id_id=project_id,
+            frame_no=data["current_frame"],
+        ).exists():
+            raise serializers.ValidationError(
+                {"current_frame": "Frame does not exist in this project."}
+            )
+
+        object_filter = {
+            "project_id_id": project_id,
+            "object_id": data["object_id"],
+            "object_status": 1,
+        }
+        if not ObjectTrack.objects.filter(**object_filter).exists():
+            raise serializers.ValidationError(
+                {"object_id": "Active object does not exist in this project."}
+            )
+
+        if not FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            object_id=data["object_id"],
+            is_active=True,
+        ).exists():
+            raise serializers.ValidationError(
+                {"object_id": "Object has no active trajectory data."}
+            )
+        return data
+
+    def get_data(self):
+        return NextBreakService.find(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class NextBreakResponseSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField()
+    break_start = serializers.IntegerField(allow_null=True)
+    break_end = serializers.IntegerField(allow_null=True)
+
+
+class TrajectorySuggestionSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField()
+    score = serializers.FloatField(min_value=0.0, max_value=1.0)
+
+
+class TrajectoryMatchingRequestSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(min_value=0)
+    break_start = serializers.IntegerField(min_value=0)
+    break_end = serializers.IntegerField(min_value=0)
+    limit = serializers.IntegerField(
+        required=False,
+        default=TrajectoryMatchingService.DEFAULT_LIMIT,
+        min_value=1,
+        max_value=20,
+        write_only=True,
+    )
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        break_start = data["break_start"]
+        break_end = data["break_end"]
+
+        if break_start > break_end:
+            raise serializers.ValidationError(
+                {"break_end": "break_end must be greater than or equal to break_start."}
+            )
+
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        if not ObjectTrack.objects.filter(
+            project_id_id=project_id,
+            object_id=data["object_id"],
+            object_status=1,
+        ).exists():
+            raise serializers.ValidationError(
+                {"object_id": "Active object does not exist in this project."}
+            )
+
+        source_rows = FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            object_id=data["object_id"],
+            is_active=True,
+        )
+        if source_rows.filter(
+            frame__frame_no__gte=break_start,
+            frame__frame_no__lte=break_end,
+        ).exists():
+            raise serializers.ValidationError(
+                {"break_range": "Selected object has active data inside this range."}
+            )
+
+        boundary_frames = {
+            "before": source_rows.filter(frame__frame_no=break_start - 1).exists(),
+            "after": source_rows.filter(frame__frame_no=break_end + 1).exists(),
+        }
+        if not all(boundary_frames.values()):
+            raise serializers.ValidationError(
+                {
+                    "break_range": (
+                        "The range must be a continuous internal break with active "
+                        "object data immediately before and after it."
+                    )
+                }
+            )
+        return data
+
+    def get_data(self):
+        return TrajectoryMatchingService().suggest(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class TrajectoryMatchingResponseSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField()
+    break_start = serializers.IntegerField()
+    break_end = serializers.IntegerField()
+    suggestions = TrajectorySuggestionSerializer(many=True)
+
+
+class TrajectoryClipSuggestionRequestSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(min_value=0)
+    start_frame = serializers.IntegerField(required=False, min_value=0)
+    end_frame = serializers.IntegerField(required=False, min_value=0)
+    limit = serializers.IntegerField(
+        required=False,
+        default=TrajectoryClipSuggestionService.DEFAULT_LIMIT,
+        min_value=1,
+        max_value=20,
+        write_only=True,
+    )
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        track = ObjectTrack.objects.filter(
+            project_id_id=project_id,
+            object_id=data["object_id"],
+            object_status=1,
+        ).first()
+        if track is None:
+            raise serializers.ValidationError(
+                {"object_id": "Active object does not exist in this project."}
+            )
+
+        start_frame = data.get("start_frame", track.start_frame)
+        end_frame = data.get("end_frame", track.end_frame)
+        if start_frame > end_frame:
+            raise serializers.ValidationError(
+                {"end_frame": "end_frame must be greater than or equal to start_frame."}
+            )
+        if start_frame < track.start_frame or end_frame > track.end_frame:
+            raise serializers.ValidationError(
+                {
+                    "frame_range": (
+                        f"Range must be between {track.start_frame} "
+                        f"and {track.end_frame}."
+                    )
+                }
+            )
+
+        data["start_frame"] = start_frame
+        data["end_frame"] = end_frame
+        return data
+
+    def get_data(self):
+        return TrajectoryClipSuggestionService().suggest(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class ClipIntervalSuggestionSerializer(serializers.Serializer):
+    start_frame = serializers.IntegerField()
+    end_frame = serializers.IntegerField()
+    peak_frame = serializers.IntegerField()
+    score = serializers.FloatField(min_value=0.0, max_value=1.0)
+    peak_movement = serializers.FloatField(min_value=0.0)
+    reason = serializers.ChoiceField(choices=("movement_spike",))
+
+
+class TrajectoryClipSuggestionResponseSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    object_id = serializers.IntegerField()
+    analyzed_range = serializers.DictField(
+        child=serializers.IntegerField(min_value=0)
+    )
+    baseline_movement = serializers.FloatField(allow_null=True, min_value=0.0)
+    suggestions = ClipIntervalSuggestionSerializer(many=True)
+
+
+class TrajectoryGapRequestSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField(min_value=0)
+    min_gap = serializers.IntegerField(
+        required=False,
+        default=TrajectoryGapService.DEFAULT_MIN_GAP,
+        min_value=TrajectoryGapService.DEFAULT_MIN_GAP,
+    )
+    limit = serializers.IntegerField(
+        required=False,
+        default=TrajectoryGapService.DEFAULT_LIMIT,
+        min_value=1,
+        max_value=100,
+    )
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        if not FrameObject.objects.filter(
+            frame__project_id_id=project_id,
+            object_id=data["object_id"],
+            is_active=True,
+        ).exists():
+            raise serializers.ValidationError(
+                {"object_id": "Object has no active trajectory data."}
+            )
+        return data
+
+    def get_data(self):
+        return TrajectoryGapService.find(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class TrajectoryGapSerializer(serializers.Serializer):
+    start_frame = serializers.IntegerField()
+    end_frame = serializers.IntegerField()
+    gap = serializers.IntegerField(min_value=2)
+
+
+class TrajectoryGapResponseSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    object_id = serializers.IntegerField()
+    largest_gap = TrajectoryGapSerializer(allow_null=True)
+    gaps = TrajectoryGapSerializer(many=True)
+
+
+class TrajectoryLengthRequestSerializer(serializers.Serializer):
+    ordering = serializers.ChoiceField(
+        required=False,
+        default=TrajectoryLengthService.ORDER_LONGEST_FIRST,
+        choices=(
+            TrajectoryLengthService.ORDER_LONGEST_FIRST,
+            TrajectoryLengthService.ORDER_SHORTEST_FIRST,
+        ),
+    )
+    min_length = serializers.IntegerField(required=False, min_value=1)
+    max_length = serializers.IntegerField(required=False, min_value=1)
+
+    def validate(self, data):
+        project_id = self.context["project_id"]
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError({"project_id": "Invalid project_id."})
+
+        min_length = data.get("min_length")
+        max_length = data.get("max_length")
+        if (
+            min_length is not None
+            and max_length is not None
+            and min_length > max_length
+        ):
+            raise serializers.ValidationError(
+                {"max_length": "max_length must be greater than or equal to min_length."}
+            )
+        return data
+
+    def get_data(self):
+        return TrajectoryLengthService.list(
+            project_id=self.context["project_id"],
+            **self.validated_data,
+        )
+
+
+class TrajectoryLengthSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField()
+    first_frame = serializers.IntegerField()
+    last_frame = serializers.IntegerField()
+    length = serializers.IntegerField(min_value=1)
+
+
+class TrajectoryLengthResponseSerializer(serializers.Serializer):
+    project_id = serializers.IntegerField()
+    ordering = serializers.ChoiceField(
+        choices=(
+            TrajectoryLengthService.ORDER_LONGEST_FIRST,
+            TrajectoryLengthService.ORDER_SHORTEST_FIRST,
+        )
+    )
+    trajectories = TrajectoryLengthSerializer(many=True)
 
 
 ###########################################

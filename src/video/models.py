@@ -76,8 +76,11 @@ class FrameObject(models.Model):
         db_table = "frame_object"
         indexes = [
             # models.Index(fields=["frame", "object_id", "is_active"]),
-            models.Index(fields=["object_id"]),
             models.Index(fields=["frame", "is_active"]),
+            models.Index(
+                fields=["object_id", "is_active", "frame"],
+                name="fo_runtime_break_idx",
+            ),
 
             # NEW OPTIMIZED INDEX
             models.Index(

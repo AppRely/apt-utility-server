@@ -42,6 +42,16 @@ from .serializers import (
     FrameConfusionRowSerializer,
     FrameTimelineSerializer,
     InterpolateTrajectorySerializer,
+    NextBreakRequestSerializer,
+    NextBreakResponseSerializer,
+    TrajectoryMatchingRequestSerializer,
+    TrajectoryMatchingResponseSerializer,
+    TrajectoryClipSuggestionRequestSerializer,
+    TrajectoryClipSuggestionResponseSerializer,
+    TrajectoryGapRequestSerializer,
+    TrajectoryGapResponseSerializer,
+    TrajectoryLengthRequestSerializer,
+    TrajectoryLengthResponseSerializer,
 )
 
 from wsgiref.util import FileWrapper
@@ -1966,7 +1976,180 @@ class VideoViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
-        
+
+    @swagger_auto_schema(
+        operation_description="Return the next continuous runtime break for one trajectory.",
+        manual_parameters=[
+            openapi.Parameter(
+                "object_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+            ),
+            openapi.Parameter(
+                "current_frame",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+            ),
+        ],
+        responses={200: NextBreakResponseSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="next-break",
+    )
+    def next_break(self, request, pk=None):
+        serializer = NextBreakRequestSerializer(
+            data=request.query_params,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = NextBreakResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description=(
+            "Rank trajectories that are the most likely continuation around a runtime break."
+        ),
+        request_body=TrajectoryMatchingRequestSerializer,
+        responses={200: TrajectoryMatchingResponseSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="trajectory-linking-suggestions",
+    )
+    def trajectory_linking_suggestions(self, request, pk=None):
+        serializer = TrajectoryMatchingRequestSerializer(
+            data=request.data,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = TrajectoryMatchingResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        method="post",
+        operation_description=(
+            "Suggest clip intervals where an object's movement differs "
+            "significantly from its normal trajectory."
+        ),
+        request_body=TrajectoryClipSuggestionRequestSerializer,
+        responses={200: TrajectoryClipSuggestionResponseSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="trajectory-clip-suggestions",
+    )
+    def trajectory_clip_suggestions(self, request, pk=None):
+        serializer = TrajectoryClipSuggestionRequestSerializer(
+            data=request.data,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = TrajectoryClipSuggestionResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        operation_description=(
+            "Return the largest and other significant frame gaps for one trajectory."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                "object_id",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=True,
+            ),
+            openapi.Parameter(
+                "min_gap",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description="Minimum frame difference to include (default: 2).",
+            ),
+            openapi.Parameter(
+                "limit",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description="Maximum number of significant gaps to return (default: 20).",
+            ),
+        ],
+        responses={200: TrajectoryGapResponseSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path="trajectory-gaps")
+    def trajectory_gaps(self, request, pk=None):
+        serializer = TrajectoryGapRequestSerializer(
+            data=request.query_params,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = TrajectoryGapResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
+            status=status.HTTP_200_OK,
+        )
+
+    @swagger_auto_schema(
+        operation_description=(
+            "List active trajectories ordered and optionally filtered by frame-span length."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                "ordering",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_STRING,
+                required=False,
+                enum=["length_desc", "length_asc"],
+                description="Sort longest or shortest first (default: length_desc).",
+            ),
+            openapi.Parameter(
+                "min_length",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+            openapi.Parameter(
+                "max_length",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+            ),
+        ],
+        responses={200: TrajectoryLengthResponseSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path="trajectory-lengths")
+    def trajectory_lengths(self, request, pk=None):
+        serializer = TrajectoryLengthRequestSerializer(
+            data=request.query_params,
+            context={"project_id": pk},
+        )
+        serializer.is_valid(raise_exception=True)
+        result = serializer.get_data()
+        response_data = TrajectoryLengthResponseSerializer(result).data
+        return Response(
+            {"status": "success", "data": response_data},
+            status=status.HTTP_200_OK,
+        )
+
     #####################################
     # Activity Log Export API
     #####################################
