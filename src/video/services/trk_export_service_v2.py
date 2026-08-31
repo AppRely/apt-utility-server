@@ -341,9 +341,9 @@ class TrkBuilderExportService:
         #  when to_py() subtracts 1 during loading.
         # ------------------------------------------------------------
         coord_dtype = np.float32          # coordinates are floating-point
-        conf_dtype  = np.float32 if self.trk.pTrkConf else None
-        ts_dtype    = np.float64 if self.trk.pTrkTS else None
-        tag_dtype   = bool if self.trk.pTrkTag else None
+        conf_dtype = np.float32 if self.trk.pTrkConf is not None else None
+        ts_dtype = np.float64 if self.trk.pTrkTS is not None else None
+        tag_dtype = bool if self.trk.pTrkTag is not None else None
 
         # If you have animal confidence, force it to float too
         has_animal_conf = hasattr(self.trk, "pTrkAnimalConf") and self.trk.pTrkAnimalConf is not None
@@ -352,9 +352,9 @@ class TrkBuilderExportService:
 
         # Allocate container lists
         coord_data = [None] * total_targets
-        conf_data = [None] * total_targets if self.trk.pTrkConf else None
-        ts_data = [None] * total_targets if self.trk.pTrkTS else None
-        tag_data = [None] * total_targets if self.trk.pTrkTag else None
+        conf_data = [None] * total_targets if self.trk.pTrkConf is not None else None
+        ts_data = [None] * total_targets if self.trk.pTrkTS is not None else None
+        tag_data = [None] * total_targets if self.trk.pTrkTag is not None else None
         animal_conf_data = [None] * total_targets if has_animal_conf else None
 
         object_ids = sorted(self.objects.keys())
@@ -376,31 +376,31 @@ class TrkBuilderExportService:
 
             conf = (
                 np.full(
-                    (self.trk.nlandmarks, 1, n_frames_in_track),
+                    self.trk.pTrkConf.size_rest + (n_frames_in_track,),
                     np.nan,
                     dtype=conf_dtype,
                 )
-                if self.trk.pTrkConf
+                if self.trk.pTrkConf is not None
                 else None
             )
 
             ts = (
                 np.full(
-                    (self.trk.nlandmarks, 1, n_frames_in_track),
+                    self.trk.pTrkTS.size_rest + (n_frames_in_track,),
                     -np.inf,
                     dtype=ts_dtype,
                 )
-                if self.trk.pTrkTS
+                if self.trk.pTrkTS is not None
                 else None
             )
 
             tag = (
                 np.full(
-                    (self.trk.nlandmarks, 1, n_frames_in_track),
+                    self.trk.pTrkTag.size_rest + (n_frames_in_track,),
                     False,
                     dtype=tag_dtype,
                 )
-                if self.trk.pTrkTag
+                if self.trk.pTrkTag is not None
                 else None
             )
 
@@ -418,13 +418,45 @@ class TrkBuilderExportService:
             for frame_no, row in self.objects[object_id]["frames"].items():
                 idx = frame_no - start_f
                 if 0 <= idx < n_frames_in_track:
-                    coords[:, :, idx] = row.coordinates
+                    coords[..., idx] = self._normalize_frame_value(
+                        row.coordinates,
+                        expected_shape=coords.shape[:-1],
+                        dtype=coord_dtype,
+                        default=np.nan,
+                        field_name="coordinates",
+                        object_id=object_id,
+                        frame_no=frame_no,
+                    )
                     if conf is not None:
-                        conf[:, :, idx] = row.confidence
+                        conf[..., idx] = self._normalize_frame_value(
+                            row.confidence,
+                            expected_shape=conf.shape[:-1],
+                            dtype=conf_dtype,
+                            default=np.nan,
+                            field_name="confidence",
+                            object_id=object_id,
+                            frame_no=frame_no,
+                        )
                     if ts is not None:
-                        ts[:, :, idx] = row.timestamp
+                        ts[..., idx] = self._normalize_frame_value(
+                            row.timestamp,
+                            expected_shape=ts.shape[:-1],
+                            dtype=ts_dtype,
+                            default=-np.inf,
+                            field_name="timestamp",
+                            object_id=object_id,
+                            frame_no=frame_no,
+                        )
                     if tag is not None:
-                        tag[:, :, idx] = row.tag
+                        tag[..., idx] = self._normalize_frame_value(
+                            row.tag,
+                            expected_shape=tag.shape[:-1],
+                            dtype=tag_dtype,
+                            default=False,
+                            field_name="tag",
+                            object_id=object_id,
+                            frame_no=frame_no,
+                        )
 
             # Store in the containers
             coord_data[target] = coords
@@ -445,6 +477,45 @@ class TrkBuilderExportService:
         self.animal_conf_data = animal_conf_data
 
         print("\nTracklet build complete.")
+
+    @staticmethod
+    def _normalize_frame_value(
+        value,
+        *,
+        expected_shape,
+        dtype,
+        default,
+        field_name,
+        object_id,
+        frame_no,
+    ):
+        """Normalize JSON values from legacy and current import shapes."""
+        if value is None:
+            return np.full(expected_shape, default, dtype=dtype)
+
+        try:
+            array = np.asarray(value, dtype=dtype)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                f"Invalid {field_name} for object {object_id} at frame "
+                f"{frame_no}: expected numeric data with shape {expected_shape}."
+            ) from exc
+
+        expected_size = int(np.prod(expected_shape))
+
+        # A scalar has historically represented one value for the whole frame.
+        if array.size == 1:
+            return np.full(expected_shape, array.reshape(-1)[0], dtype=dtype)
+
+        # Importers have stored equivalent values as (N,), (N, 1), and
+        # (N, 1, 1). Element-count normalization safely supports all three.
+        if array.size == expected_size:
+            return array.reshape(expected_shape)
+
+        raise ValidationError(
+            f"Invalid {field_name} shape {array.shape} for object {object_id} "
+            f"at frame {frame_no}; expected {expected_shape}."
+        )
 
     def _install_tracklets(self):
 
@@ -625,4 +696,3 @@ class TrkBuilderExportService:
         self.trk.save(self.export_path)
 
         print("\nSAVE COMPLETE")
-
