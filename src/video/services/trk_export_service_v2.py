@@ -11,7 +11,6 @@ from .object_track_rebuild_service import ObjectTrackRebuildService
 from ..models import (
     Project,
     ObjectTrack,
-    VideoFrame,
     FrameObject,
 )
 
@@ -37,6 +36,8 @@ class TrkBuilderExportService:
         VideoFrame
     """
 
+    DATABASE_CHUNK_SIZE = 5000
+
     def __init__(self, project_id):
 
         self.project_id = project_id
@@ -50,10 +51,6 @@ class TrkBuilderExportService:
 
         self.object_tracks = []
 
-        self.video_frames = []
-
-        self.frame_objects = []
-
         self.trk_version = None
 
         #
@@ -61,18 +58,8 @@ class TrkBuilderExportService:
         #
         self.target_map = {}
 
-        #
-        # frame_no -> VideoFrame
-        #
-        self.frame_map = {}
-
-        #
-        # object_id -> {
-        #       track
-        #       frames
-        # }
-        #
-        self.objects = {} 
+        # object_id -> ObjectTrack
+        self.objects = {}
 
     # =====================================================
     # PUBLIC API
@@ -80,42 +67,25 @@ class TrkBuilderExportService:
 
     @classmethod
     def export(cls, project_id):
-        # Rebuild ObjectTrack from authoritative FrameObject state before export
-        
         ObjectTrackRebuildService.rebuild(project_id=project_id)
-
-        builder = cls(project_id)
-
-        return builder.build()
+        return cls(project_id).build()
 
     # =====================================================
     # BUILD
     # =====================================================
 
     def build(self):
-
         self._load_project()
-
         self._prepare_export_file()
-
         self._load_trk()
-
         self._load_database()
-
         self._build_object_map()
-
         self._allocate_targets()
-
         self._write_all_track_data()
-
         self._install_tracklets()
-
         self._write_metadata()
-
         self._finalize_metadata()
-
         self._save_trk()
-
 
         return {
             "project_id": self.project_id,
@@ -208,7 +178,6 @@ class TrkBuilderExportService:
     # =====================================================
 
     def _load_database(self):
-
         self.object_tracks = list(
             ObjectTrack.objects.filter(
                 project_id=self.project_id,
@@ -222,70 +191,15 @@ class TrkBuilderExportService:
             .order_by("object_id")
         )
 
-        self.video_frames = list(
-            VideoFrame.objects.filter(
-                project_id=self.project_id,
-            )
-            .only(
-                "frame_no",
-            )
-            .order_by("frame_no")
-        )
-
-        self.frame_map = {
-
-            x.frame_no: x
-
-            for x in self.video_frames
-
-        }
-
-        self.frame_objects = list(
-            FrameObject.objects.filter(
-                frame__project_id=self.project_id,
-                is_active=True,
-            )
-            .select_related("frame")
-            .only(
-                "object_id",
-                "coordinates",
-                "confidence",
-                "timestamp",
-                "tag",
-                "frame__frame_no",
-            )
-            .order_by(
-                "object_id",
-                "frame__frame_no",
-            )
-        )
-
     # =====================================================
     # OBJECT MAP
     # =====================================================
 
     def _build_object_map(self):
-
-        #
-        # Create object dictionary
-        #
         self.objects = {
-            track.object_id: {
-                "track": track,
-                "frames": {},
-            }
+            track.object_id: track
             for track in self.object_tracks
         }
-
-        #
-        # Attach frame objects
-        #
-        for row in self.frame_objects:
-
-            obj = self.objects.get(row.object_id)
-
-            if obj is not None:
-                obj["frames"][row.frame.frame_no] = row
 
     def _allocate_targets(self):
 
@@ -304,15 +218,15 @@ class TrkBuilderExportService:
         #
         # Reinitialize ALL tracklets
         #
-        self.trk.setntargets(
-            total_targets,
-        )
+        # Drop the original tracking arrays before allocating replacements.
+        # Metadata and size_rest remain available on each Tracklet.
+        self.trk.setntargets(total_targets, reinitialize=True)
 
         if self.trk.pTrkConf is not None:
-            self.trk.pTrkConf.setntargets(total_targets)
+            self.trk.pTrkConf.setntargets(total_targets, reinitialize=True)
 
         if hasattr(self.trk, "pTrkAnimalConf") and self.trk.pTrkAnimalConf is not None:
-            self.trk.pTrkAnimalConf.setntargets(total_targets)
+            self.trk.pTrkAnimalConf.setntargets(total_targets, reinitialize=True)
 
         #
         # Keep TRK target ids exactly equal to object ids
@@ -341,9 +255,9 @@ class TrkBuilderExportService:
         #  when to_py() subtracts 1 during loading.
         # ------------------------------------------------------------
         coord_dtype = np.float32          # coordinates are floating-point
-        conf_dtype  = np.float32 if self.trk.pTrkConf else None
-        ts_dtype    = np.float64 if self.trk.pTrkTS else None
-        tag_dtype   = bool if self.trk.pTrkTag else None
+        conf_dtype = np.float32 if self.trk.pTrkConf is not None else None
+        ts_dtype = np.float64 if self.trk.pTrkTS is not None else None
+        tag_dtype = bool if self.trk.pTrkTag is not None else None
 
         # If you have animal confidence, force it to float too
         has_animal_conf = hasattr(self.trk, "pTrkAnimalConf") and self.trk.pTrkAnimalConf is not None
@@ -352,17 +266,17 @@ class TrkBuilderExportService:
 
         # Allocate container lists
         coord_data = [None] * total_targets
-        conf_data = [None] * total_targets if self.trk.pTrkConf else None
-        ts_data = [None] * total_targets if self.trk.pTrkTS else None
-        tag_data = [None] * total_targets if self.trk.pTrkTag else None
+        conf_data = [None] * total_targets if self.trk.pTrkConf is not None else None
+        ts_data = [None] * total_targets if self.trk.pTrkTS is not None else None
+        tag_data = [None] * total_targets if self.trk.pTrkTag is not None else None
         animal_conf_data = [None] * total_targets if has_animal_conf else None
 
         object_ids = sorted(self.objects.keys())
 
-        for obj_index, object_id in enumerate(object_ids, start=1):
+        for object_id in object_ids:
             target = self.target_map[object_id]
 
-            track = self.objects[object_id]["track"]
+            track = self.objects[object_id]
             start_f = track.start_frame
             end_f = track.end_frame
             n_frames_in_track = max(0, end_f - start_f + 1)
@@ -376,31 +290,31 @@ class TrkBuilderExportService:
 
             conf = (
                 np.full(
-                    (self.trk.nlandmarks, 1, n_frames_in_track),
+                    self.trk.pTrkConf.size_rest + (n_frames_in_track,),
                     np.nan,
                     dtype=conf_dtype,
                 )
-                if self.trk.pTrkConf
+                if self.trk.pTrkConf is not None
                 else None
             )
 
             ts = (
                 np.full(
-                    (self.trk.nlandmarks, 1, n_frames_in_track),
+                    self.trk.pTrkTS.size_rest + (n_frames_in_track,),
                     -np.inf,
                     dtype=ts_dtype,
                 )
-                if self.trk.pTrkTS
+                if self.trk.pTrkTS is not None
                 else None
             )
 
             tag = (
                 np.full(
-                    (self.trk.nlandmarks, 1, n_frames_in_track),
+                    self.trk.pTrkTag.size_rest + (n_frames_in_track,),
                     False,
                     dtype=tag_dtype,
                 )
-                if self.trk.pTrkTag
+                if self.trk.pTrkTag is not None
                 else None
             )
 
@@ -414,18 +328,6 @@ class TrkBuilderExportService:
                 else None
             )
 
-            # Fill the arrays at the correct frame index offset
-            for frame_no, row in self.objects[object_id]["frames"].items():
-                idx = frame_no - start_f
-                if 0 <= idx < n_frames_in_track:
-                    coords[:, :, idx] = row.coordinates
-                    if conf is not None:
-                        conf[:, :, idx] = row.confidence
-                    if ts is not None:
-                        ts[:, :, idx] = row.timestamp
-                    if tag is not None:
-                        tag[:, :, idx] = row.tag
-
             # Store in the containers
             coord_data[target] = coords
             if conf is not None:
@@ -437,6 +339,88 @@ class TrkBuilderExportService:
             if animal_conf is not None:
                 animal_conf_data[target] = animal_conf
 
+        frame_rows = (
+            FrameObject.objects.filter(
+                frame__project_id=self.project_id,
+                is_active=True,
+            )
+            .values_list(
+                "object_id",
+                "frame__frame_no",
+                "coordinates",
+                "confidence",
+                "timestamp",
+                "tag",
+            )
+            .iterator(chunk_size=self.DATABASE_CHUNK_SIZE)
+        )
+
+        for (
+            object_id,
+            frame_no,
+            coordinates,
+            confidence,
+            timestamp,
+            tag,
+        ) in frame_rows:
+            track = self.objects.get(object_id)
+            if track is None:
+                continue
+
+            target = self.target_map[object_id]
+            idx = frame_no - track.start_frame
+            coords = coord_data[target]
+
+            if not 0 <= idx < coords.shape[-1]:
+                continue
+
+            if coordinates is not None:
+                coords[..., idx] = self._normalize_frame_value(
+                    coordinates,
+                    expected_shape=coords.shape[:-1],
+                    dtype=coord_dtype,
+                    default=np.nan,
+                    field_name="coordinates",
+                    object_id=object_id,
+                    frame_no=frame_no,
+                )
+
+            if conf_data is not None and confidence is not None:
+                conf = conf_data[target]
+                conf[..., idx] = self._normalize_frame_value(
+                    confidence,
+                    expected_shape=conf.shape[:-1],
+                    dtype=conf_dtype,
+                    default=np.nan,
+                    field_name="confidence",
+                    object_id=object_id,
+                    frame_no=frame_no,
+                )
+
+            if ts_data is not None and timestamp is not None:
+                ts = ts_data[target]
+                ts[..., idx] = self._normalize_frame_value(
+                    timestamp,
+                    expected_shape=ts.shape[:-1],
+                    dtype=ts_dtype,
+                    default=-np.inf,
+                    field_name="timestamp",
+                    object_id=object_id,
+                    frame_no=frame_no,
+                )
+
+            if tag_data is not None and tag is not None:
+                tag_array = tag_data[target]
+                tag_array[..., idx] = self._normalize_frame_value(
+                    tag,
+                    expected_shape=tag_array.shape[:-1],
+                    dtype=tag_dtype,
+                    default=False,
+                    field_name="tag",
+                    object_id=object_id,
+                    frame_no=frame_no,
+                )
+
         # Save for later installation
         self.coord_data = coord_data
         self.conf_data = conf_data
@@ -444,7 +428,45 @@ class TrkBuilderExportService:
         self.tag_data = tag_data
         self.animal_conf_data = animal_conf_data
 
-        print("\nTracklet build complete.")
+
+    @staticmethod
+    def _normalize_frame_value(
+        value,
+        *,
+        expected_shape,
+        dtype,
+        default,
+        field_name,
+        object_id,
+        frame_no,
+    ):
+        """Normalize JSON values from legacy and current import shapes."""
+        if value is None:
+            return np.full(expected_shape, default, dtype=dtype)
+
+        try:
+            array = np.asarray(value, dtype=dtype)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                f"Invalid {field_name} for object {object_id} at frame "
+                f"{frame_no}: expected numeric data with shape {expected_shape}."
+            ) from exc
+
+        expected_size = int(np.prod(expected_shape))
+
+        # A scalar has historically represented one value for the whole frame.
+        if array.size == 1:
+            return np.full(expected_shape, array.reshape(-1)[0], dtype=dtype)
+
+        # Importers have stored equivalent values as (N,), (N, 1), and
+        # (N, 1, 1). Element-count normalization safely supports all three.
+        if array.size == expected_size:
+            return array.reshape(expected_shape)
+
+        raise ValidationError(
+            f"Invalid {field_name} shape {array.shape} for object {object_id} "
+            f"at frame {frame_no}; expected {expected_shape}."
+        )
 
     def _install_tracklets(self):
 
@@ -462,8 +484,6 @@ class TrkBuilderExportService:
         if hasattr(self.trk, "pTrkAnimalConf") and self.trk.pTrkAnimalConf is not None:
             self.trk.pTrkAnimalConf.data = self.animal_conf_data
 
-        print("Tracklets Installed")
-
     def _write_metadata(self):
 
         total_targets = self.trk.ntargets
@@ -480,11 +500,9 @@ class TrkBuilderExportService:
             dtype=np.int32,
         )
 
-        for object_id, data in self.objects.items():
+        for object_id, track in self.objects.items():
 
             target = self.target_map[object_id]
-
-            track = data["track"]
 
             startframes[target] = track.start_frame
             endframes[target] = track.end_frame
@@ -529,8 +547,6 @@ class TrkBuilderExportService:
 
             self.trk.pTrkAnimalConf.startframes = startframes.copy()
             self.trk.pTrkAnimalConf.endframes = endframes.copy()
-
-        print("Metadata Written")
 
     def _finalize_metadata(self):
 
@@ -623,6 +639,3 @@ class TrkBuilderExportService:
         self._sanitize_unsigned_dtypes(self.trk)
 
         self.trk.save(self.export_path)
-
-        print("\nSAVE COMPLETE")
-

@@ -1,7 +1,7 @@
 import math
 import logging
-from django.db import connection
-from ..models import ObjectTrack, VideoFrame, FrameObject, ObjectLinkingSuggestion
+from django.db import transaction
+from ..models import Project, ObjectTrack, VideoFrame, FrameObject, ObjectLinkingSuggestion
 
 from django.db import close_old_connections
 
@@ -52,6 +52,7 @@ def euclidean_distance(p1, p2):
         return float('inf')
     return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
 
+@transaction.atomic
 def compute_object_linking_suggestions(project_id, gap_max=10, distance_threshold=None):
     """
     Compute and store linking suggestions for a project.
@@ -59,8 +60,9 @@ def compute_object_linking_suggestions(project_id, gap_max=10, distance_threshol
     """
     logger.info(f"[LINKING] Starting for project {project_id}")
     try:
-        # Close old DB connections to avoid thread issues
-        connection.close_if_unusable_or_obsolete()
+        # Use the same per-project lock as ObjectTrackRebuildService. This keeps
+        # track IDs valid until all suggestion foreign keys have been committed.
+        Project.objects.select_for_update().get(project_id=project_id)
 
         # Delete old suggestions
         deleted, _ = ObjectLinkingSuggestion.objects.filter(project_id=project_id).delete()
