@@ -117,6 +117,16 @@ class ProjectSerializer(serializers.ModelSerializer):
 
         return f"{base}{ext}"
 
+
+class ProjectListSerializer(ProjectSerializer):
+    """Project-list representation with the latest activity datetime."""
+
+    last_updated = serializers.DateTimeField(source="last_activity_updated_at", read_only=True, allow_null=True)
+
+    class Meta(ProjectSerializer.Meta):
+        fields = ProjectSerializer.Meta.fields + ["last_updated"]
+
+
 class DeleteProjectSerializer(serializers.Serializer):
     """
     Serializer to validate project deletion request.

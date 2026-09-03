@@ -6,19 +6,21 @@ from urllib import response
 
 import orjson
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Max, Q
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from .services.activity_log_export_service import ActivityLogExportService
 
 from .models import Project, VideoFrame
+from .pagination import ProjectListPagination
 from .serializers import (
     ActivityLogExportSerializer,
     ActivityLogRequestSerializer,
@@ -33,6 +35,7 @@ from .serializers import (
     LinkObjectSerializer,
     ListUniqueIdsSerializer,
     ObjectTrackDetailsSerializer,
+    ProjectListSerializer,
     ProjectSerializer,
     ProjectUploadSerializer,
     RedoSerializer,
@@ -435,37 +438,50 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
     @swagger_auto_schema(
-        operation_description="Get list of all in-progress projects with essential details",
-        responses={200: ProjectSerializer(many=True), 500: "Server error"},
+        operation_description="Get a paginated list of active and completed projects with essential details",
+        manual_parameters=[
+            openapi.Parameter(
+                "page",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description="Page number (defaults to 1)",
+            ),
+            openapi.Parameter(
+                "page_size",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description="Projects per page (defaults to 18, maximum 100)",
+            ),
+        ],
+        responses={200: "Paginated project list", 404: "Invalid page", 500: "Server error"},
     )
-    @action(detail=False, methods=["get"], url_path="project-list")
+    @action(detail=False, methods=["get"], url_path="project-list", pagination_class=ProjectListPagination)
     def project_list(self, request):
         """
         GET /videos/project-list/
 
-        Retrieve a list of projects with active or completed status.
+        Retrieve a paginated list of projects with active or completed status.
         Returns projects that are currently in progress or completed,
         ordered by project identifier.
 
         Args:
             request (Request): Incoming HTTP request.
         Returns:
-            Response: List of serialized project records.
+            Response: Project records and page metadata.
         """
         try:
             projects = Project.objects.filter(
                 Q(project_status="inprogress") | Q(project_status="completed"), status="Completed"
-            ).order_by("project_id")
+            ).annotate(last_activity_updated_at=Max("activitylog__activity_updated_at")).order_by("project_id")
 
-            serializer = ProjectSerializer(projects, many=True)
-            return Response(
-                {
-                    "status": "success",
-                    "data": serializer.data,
-                },
-                status=status.HTTP_200_OK,
-            )
+            page = self.paginate_queryset(projects)
+            serializer = ProjectListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
 
+        except APIException:
+            raise
         except Exception:
             logger.error("Failed to fetch projects", exc_info=True)
             return Response(

@@ -62,8 +62,13 @@ Use the dedicated project actions for the normal upload and deletion workflow be
 | Method | Path | Why you use it | Main input |
 | --- | --- | --- | --- |
 | `POST` | `videos/project-upload/` | Create a project from a video and APT tracking file, then import its tracking data. | Multipart: `project_name`, `video_file`, `tracking_file` |
-| `GET` | `videos/project-list/` | Show active and completed projects in a project picker. | None |
+| `GET` | `videos/project-list/` | Show active and completed projects in a project picker. | Query: optional `page` (default `1`), `page_size` (default `18`, max `100`) |
 | `DELETE` | `videos/{project_id}/delete-project/` | Delete a project, related database rows, source files, and exports. | Project ID in the path |
+
+For example, `GET videos/project-list/?page=2&page_size=10` returns the project records in `data` and a
+`pagination` object containing `current_page`, `page_size`, `total_pages`, `total_items`, `next`, and `previous`.
+Each project also contains `last_updated`, the latest `ActivityLog.activity_updated_at` datetime in the API's
+configured ISO-style UTC format, or `null` when the project has no activity.
 
 The `VideoViewSet` also exposes standard router-generated project CRUD routes:
 
