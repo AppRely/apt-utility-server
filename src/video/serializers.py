@@ -119,12 +119,13 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 
 class ProjectListSerializer(ProjectSerializer):
-    """Project-list representation with the latest activity datetime."""
+    """Project-list representation with activity and active-object information."""
 
     last_updated = serializers.DateTimeField(source="last_activity_updated_at", read_only=True, allow_null=True)
+    active_object_count = serializers.IntegerField(read_only=True)
 
     class Meta(ProjectSerializer.Meta):
-        fields = ProjectSerializer.Meta.fields + ["last_updated"]
+        fields = ProjectSerializer.Meta.fields + ["last_updated", "active_object_count"]
 
 
 class DeleteProjectSerializer(serializers.Serializer):

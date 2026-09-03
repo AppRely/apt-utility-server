@@ -46,6 +46,7 @@ For example, `GET videos/project-list/?page=2&page_size=10` returns the project 
 `pagination` object containing `current_page`, `page_size`, `total_pages`, `total_items`, `next`, and `previous`.
 Each project also contains `last_updated`, the latest `ActivityLog.activity_updated_at` datetime in the API's
 configured ISO-style UTC format, or `null` when the project has no activity.
+`active_object_count` contains the number of distinct related object IDs whose track `object_status` is `1`.
 
 The `VideoViewSet` is a `ModelViewSet`, so standard router routes are also present:
 

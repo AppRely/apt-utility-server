@@ -6,7 +6,7 @@ from urllib import response
 
 import orjson
 from django.conf import settings
-from django.db.models import Max, Q
+from django.db.models import Count, Max, Q
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_yasg import openapi
@@ -474,7 +474,14 @@ class VideoViewSet(viewsets.ModelViewSet):
         try:
             projects = Project.objects.filter(
                 Q(project_status="inprogress") | Q(project_status="completed"), status="Completed"
-            ).annotate(last_activity_updated_at=Max("activitylog__activity_updated_at")).order_by("project_id")
+            ).annotate(
+                last_activity_updated_at=Max("activitylog__activity_updated_at"),
+                active_object_count=Count(
+                    "object_tracks__object_id",
+                    filter=Q(object_tracks__object_status=1),
+                    distinct=True,
+                ),
+            ).order_by("project_id")
 
             page = self.paginate_queryset(projects)
             serializer = ProjectListSerializer(page, many=True)
