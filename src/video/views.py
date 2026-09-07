@@ -67,6 +67,7 @@ import zlib
 from .services.confusion_service import ConfusionTableService
 
 from .services.unique_ids_service import UniqueIdsService
+from .services.object_deletion_service import ObjectDeletionService
 from .services.background_executor import executor
 from .services.confusion_store_service import ConfusionStoreService
 logger = logging.getLogger(__name__)
@@ -1185,7 +1186,21 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         method="post",
-        operation_description="Delete (nullify) an active object from video_data within a given frame range. Operation is allowed only if the object is active.",
+        operation_description=(
+            "Soft-delete one object over a selected frame range, or bulk-delete "
+            "multiple objects over their individual lifecycle ranges."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                name="operation_type",
+                in_=openapi.IN_QUERY,
+                description="Delete operation type. Defaults to single.",
+                type=openapi.TYPE_STRING,
+                enum=["single", "bulk"],
+                default="single",
+                required=False,
+            ),
+        ],
         request_body=DeleteObjectSerializer,
         responses={
             200: "Object delete operation completed successfully",
@@ -1195,35 +1210,76 @@ class VideoViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=["post"], url_path="objects/delete")
     def delete_object(self, request, pk=None):
-        """
-        POST /api/v1/videos/{project_id}/objects/delete/
-        Delete an active object from video_data within a specified
-        frame range. This operation is only permitted if the object is currently
-        active.
-        Args:
-            request (Request): Incoming HTTP request containing delete parameters
-                in the request body.
-            pk (int): Project identifier.
-        Returns:
-            Response: Result of the delete operation.
-        """
         try:
-            serializer = DeleteObjectSerializer(data=request.data, context={"project_id": pk})
+            project_id = int(pk)
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        "Invalid project ID. Replace {project_id} in the URL "
+                        "with a valid numeric project ID, for example 432."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        operation_type = request.query_params.get("operation_type", "single")
+        if operation_type not in ("single", "bulk"):
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid operation_type. Supported values are single and bulk.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            serializer = DeleteObjectSerializer(
+                data=request.data,
+                context={
+                    "project_id": project_id,
+                    "operation_type": operation_type,
+                },
+            )
             serializer.is_valid(raise_exception=True)
-            result = serializer.save()
+
+            validated_data = serializer.validated_data
+            if operation_type == "bulk":
+                result = ObjectDeletionService.delete_bulk_objects(
+                    project_id=project_id,
+                    object_ids=validated_data["object_ids"],
+                    object_tracks=validated_data["obj_tracks"],
+                )
+                message = "Objects deleted successfully"
+            else:
+                result = ObjectDeletionService.delete_single_object(
+                    project_id=project_id,
+                    object_id=validated_data["object_id"],
+                    start_frame=validated_data["start_frame"],
+                    end_frame=validated_data["end_frame"],
+                    object_track=validated_data["obj_track"],
+                )
+                message = "Object deleted successfully"
+
             return Response(
                 {
                     "status": "success",
-                    "message": "Object deleted successfully",
+                    "message": message,
                     "data": result,
                 },
                 status=status.HTTP_200_OK,
             )
         except serializers.ValidationError as ve:
+            message = (
+                "Bulk delete validation failed"
+                if operation_type == "bulk"
+                else "Invalid input data"
+            )
             return Response(
                 {
                     "status": "error",
-                    "message": "Invalid input data",
+                    "message": message,
                     "errors": ve.detail,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1233,7 +1289,11 @@ class VideoViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     "status": "error",
-                    "message": "Something went wrong while deleting the object",
+                    "message": (
+                        "Something went wrong while deleting the object"
+                        if operation_type == "single"
+                        else "Something went wrong while deleting the objects"
+                    ),
                     "errors": str(e),
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

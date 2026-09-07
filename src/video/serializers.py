@@ -990,24 +990,45 @@ class SwapObjectSerializer(serializers.Serializer):
 
 
 class DeleteObjectSerializer(serializers.Serializer):
-    object_id = serializers.IntegerField(required=True)
-    start_frame = serializers.IntegerField(required=True)
-    end_frame = serializers.IntegerField(required=True)
+    object_id = serializers.IntegerField(required=False)
+    start_frame = serializers.IntegerField(required=False)
+    end_frame = serializers.IntegerField(required=False)
+    object_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=False,
+    )
 
-    # ---------------------------
-    # VALIDATION
-    # ---------------------------
     def validate(self, data):
         project_id = self.context["project_id"]
+        operation_type = self.context.get("operation_type", "single")
+
+        if not Project.objects.filter(project_id=project_id).exists():
+            raise serializers.ValidationError("Invalid project_id")
+
+        if operation_type == "single":
+            return self._validate_single(data=data, project_id=project_id)
+        if operation_type == "bulk":
+            return self._validate_bulk(data=data, project_id=project_id)
+
+        raise serializers.ValidationError(
+            "Invalid operation_type. Supported values are single and bulk."
+        )
+
+    def _validate_single(self, *, data, project_id):
+        required_fields = ("object_id", "start_frame", "end_frame")
+        missing_fields = {
+            field: ["This field is required."]
+            for field in required_fields
+            if field not in data
+        }
+        if missing_fields:
+            raise serializers.ValidationError(missing_fields)
+
         object_id = data["object_id"]
         start_frame = data["start_frame"]
         end_frame = data["end_frame"]
 
-        # Project validation
-        if not Project.objects.filter(project_id=project_id).exists():
-            raise serializers.ValidationError("Invalid project_id")
-
-        # Frame range validation
         if start_frame > end_frame:
             raise serializers.ValidationError("start_frame must be less than or equal to end_frame")
 
@@ -1016,7 +1037,6 @@ class DeleteObjectSerializer(serializers.Serializer):
         except ObjectTrack.DoesNotExist:
             raise serializers.ValidationError("Active object not found")
 
-        # Range must lie inside lifecycle
         if start_frame < obj_track.start_frame or end_frame > obj_track.end_frame:
             raise serializers.ValidationError(
                 f"Delete range must be between {obj_track.start_frame} and {obj_track.end_frame}"
@@ -1025,98 +1045,51 @@ class DeleteObjectSerializer(serializers.Serializer):
         data["obj_track"] = obj_track
         return data
 
-    # ---------------------------
-    # DYNAMIC SLOT DISCOVERY
-    # ---------------------------
-    # @staticmethod
-    # def _get_object_id_fields():
-    #     return [
-    #         field.name
-    #         for field in VideoData._meta.fields
-    #         if field.name.startswith("object_") and field.name.endswith("_id")
-    #     ]
-
-    # ---------------------------
-    # CREATE (BEHAVIOR UNCHANGED + SNAPSHOT ADDED)
-    # ---------------------------
-    def create(self, validated_data):
-        project_id = self.context["project_id"]
-
-        object_id = validated_data["object_id"]
-        start_frame = validated_data["start_frame"]
-        end_frame = validated_data["end_frame"]
-        obj_track = validated_data["obj_track"]
-
-        with transaction.atomic():
-            # ---------------------------
-            # SNAPSHOT: BEFORE STATE
-            # ---------------------------
-            before_state = SnapshotBuilder.build(
-                before_qs_map={
-                    "FrameObject": (FrameObject.objects.filter(
-                        frame__project_id_id=project_id,
-                        object_id=object_id,
-                        frame__frame_no__gte=start_frame,
-                        frame__frame_no__lte=end_frame,
-                    ), ("id", "is_active")),
-                    "ObjectTrack": (ObjectTrack.objects.filter(
-                        project_id_id=project_id,
-                        object_id=object_id,
-                    ), ("track_id", "object_status", "operation_note")),
-                },
-                after_qs_map={},
+    def _validate_bulk(self, *, data, project_id):
+        if "object_ids" not in data:
+            raise serializers.ValidationError(
+                {"object_ids": ["This field is required."]}
             )
 
-            # ---- APPLY SOFT DELETE ----
-            affected_frames = FrameObject.objects.filter(
-                frame__project_id_id=project_id,
-                object_id=object_id,
-                frame__frame_no__gte=start_frame,
-                frame__frame_no__lte=end_frame,
-            ).update(is_active=False)
-
-            ObjectLifecycleService.deactivate_object(obj_track, note=f"deleted_frames_{start_frame}_to_{end_frame}")
-
-            # ---------------------------
-            # SNAPSHOT: AFTER STATE
-            # ---------------------------
-            after_state = SnapshotBuilder.build(
-                before_qs_map={},
-                after_qs_map={
-                    "FrameObject": (FrameObject.objects.filter(
-                        frame__project_id_id=project_id,
-                        object_id=object_id,
-                        frame__frame_no__gte=start_frame,
-                        frame__frame_no__lte=end_frame,
-                    ), ("id", "is_active")),
-                    "ObjectTrack": (ObjectTrack.objects.filter(
-                        project_id_id=project_id,
-                        object_id=object_id,
-                    ), ("track_id", "object_status", "operation_note")),
-                },
+        object_ids = data["object_ids"]
+        if not object_ids:
+            raise serializers.ValidationError(
+                {"object_ids": ["At least one object ID is required."]}
+            )
+        if len(object_ids) != len(set(object_ids)):
+            raise serializers.ValidationError(
+                {"object_ids": ["Duplicate object IDs are not allowed."]}
             )
 
-            # ---------------------------
-            # SNAPSHOT LOG
-            # ---------------------------
-            SnapshotLogger.log(
-                project_id=project_id,
-                operation="delete",
-                before_state=before_state,
-                after_state=after_state,
-                objects_data={
-                    "object_id": object_id,
-                    "object_start": start_frame,
-                    "object_end": end_frame,
-                },
+        active_tracks = list(
+            ObjectTrack.objects.filter(
+                project_id_id=project_id,
+                object_id__in=object_ids,
+                object_status=1,
+            )
+        )
+        tracks_by_object_id = {}
+        for track in active_tracks:
+            tracks_by_object_id.setdefault(track.object_id, []).append(track)
+
+        invalid_object_ids = []
+        for object_id in object_ids:
+            matching_tracks = tracks_by_object_id.get(object_id, [])
+            if len(matching_tracks) != 1:
+                invalid_object_ids.append(object_id)
+                continue
+            if matching_tracks[0].start_frame > matching_tracks[0].end_frame:
+                invalid_object_ids.append(object_id)
+
+        if invalid_object_ids:
+            raise serializers.ValidationError(
+                {"invalid_object_ids": invalid_object_ids}
             )
 
-        return {
-            "object_id": object_id,
-            "deleted_range": f"{start_frame}-{end_frame}",
-            "frames_affected": affected_frames,
-            "object_status": 0,
-        }
+        data["obj_tracks"] = [
+            tracks_by_object_id[object_id][0] for object_id in object_ids
+        ]
+        return data
 
 
 class UndoSerializer(serializers.Serializer):

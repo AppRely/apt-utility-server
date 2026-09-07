@@ -469,7 +469,7 @@ class UndoRedoService:
         with transaction.atomic():
             op = activity.operation
 
-            if op == "delete":
+            if op in ("delete", "BULK_DELETE"):
                 UndoRedoService._undo_delete(snapshot)
             # Keep break_object for activity rows recorded before break modes
             # were split into break_before and break_after.
@@ -515,7 +515,7 @@ class UndoRedoService:
         with transaction.atomic():
             op = activity.operation
 
-            if op == "delete":
+            if op in ("delete", "BULK_DELETE"):
                 UndoRedoService._redo_delete(snapshot)
             # Keep break_object for activity rows recorded before break modes
             # were split into break_before and break_after.
