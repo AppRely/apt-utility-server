@@ -92,6 +92,14 @@ Press `Ctrl+C` to stop following logs. This does not stop the background contain
 
 Opening <http://localhost:8002/> redirects to Swagger UI.
 
+## Create a Superuser
+
+After the database migrations have been applied, create an administrator account and follow the prompts:
+
+```bash
+docker compose run --rm web python manage.py createsuperuser
+```
+
 ## Important Commands
 
 | Command | Purpose |
