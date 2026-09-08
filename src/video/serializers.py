@@ -958,19 +958,19 @@ class SwapObjectSerializer(serializers.Serializer):
             ).update(object_id=obj2)
 
             # 4️⃣ Update ObjectTrack (partial swap from current_frame onward)
-            obj1_old_end = obj1_track.end_frame
-            obj2_old_end = obj2_track.end_frame
-
-            obj1_track.start_frame = current_frame
-            obj1_track.end_frame = obj2_old_end
-            obj1_track.operation_note = f"swap_from_frame_{current_frame}_with_{obj2}"
-
-            obj2_track.start_frame = current_frame
-            obj2_track.end_frame = obj1_old_end
-            obj2_track.operation_note = f"swap_from_frame_{current_frame}_with_{obj1}"
-
-            obj1_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
-            obj2_track.save(update_fields=["start_frame", "end_frame", "operation_note"])
+            # Keep unchanged prefix frames in the bounds used by later deletes.
+            for track, other_id in ((obj1_track, obj2), (obj2_track, obj1)):
+                bounds = FrameObject.objects.filter(
+                    frame__project_id_id=project_id,
+                    object_id=track.object_id,
+                    is_active=True,
+                ).aggregate(start=Min("frame__frame_no"), end=Max("frame__frame_no"))
+                if bounds["start"] is None:
+                    raise serializers.ValidationError("Swapped object has no active frames")
+                track.start_frame = bounds["start"]
+                track.end_frame = bounds["end"]
+                track.operation_note = f"swap_from_frame_{current_frame}_with_{other_id}"
+                track.save(update_fields=["start_frame", "end_frame", "operation_note"])
 
             # =====================================================
             # SNAPSHOT — AFTER (Capture swapped state)
@@ -997,10 +997,10 @@ class SwapObjectSerializer(serializers.Serializer):
                 after_state=after_state,
                 objects_data={
                     "object_1_id": obj1,
-                    "object_1_start": obj1_track.start_frame,
+                    "object_1_start": swap_start,
                     "object_1_end": obj1_track.end_frame,
                     "object_2_id": obj2,
-                    "object_2_start": obj2_track.start_frame,
+                    "object_2_start": swap_start,
                     "object_2_end": obj2_track.end_frame,
                 },
             )
