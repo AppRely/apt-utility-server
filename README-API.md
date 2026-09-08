@@ -112,7 +112,7 @@ These endpoints change tracking data and create operation snapshots used by undo
 
 | Method | Path | Why you use it | Main input |
 | --- | --- | --- | --- |
-| `PUT` | `videos/{project_id}/link-objects/` | Join two object trajectories, including overlapping tracks when one object should win. | Two object IDs and their start/end ranges; optional `operation`, `preferred_object` |
+| `PUT` | `videos/{project_id}/link-objects/` | Join two trajectories, resolve overlapping tracks, or bulk-link multiple trajectories. | Pair fields for `link`/`overlap`; `operation: "bulk_link"` with an `objects` list for bulk linking |
 | `POST` | `videos/{project_id}/objects/break/` | Split one trajectory at a selected frame. | `object_id`, `break_frame`; query `break_type=before|after` |
 | `POST` | `videos/{project_id}/clip-object/` | Move a selected interval from one trajectory into a newly assigned object ID. | `object_id`, `start_frame`, `end_frame` |
 | `PUT` | `videos/{project_id}/swap-objects/` | Exchange two object identities from a selected frame onward. | `object_1_id`, `object_2_id`, `current_frame` |
@@ -136,6 +136,139 @@ For a normal link, send:
 ```
 
 For overlapping trajectories, set `operation` to `overlap` and set `preferred_object` to either `object_1_id` or `object_2_id`.
+
+### Bulk linking trajectories
+
+`PUT /api/v1/videos/{project_id}/link-objects/`
+
+Existing `link` (the default) and `overlap` requests retain their existing fields and strategies. No migration or new endpoint is required.
+
+#### Request
+
+```json
+{
+  "operation": "bulk_link",
+  "objects": [
+    {"object_id": 10, "start_frame": 1, "end_frame": 100},
+    {"object_id": 20, "start_frame": 101, "end_frame": 200},
+    {"object_id": 30, "start_frame": 201, "end_frame": 300}
+  ]
+}
+```
+
+Ranges are inclusive. Supply at least two unique object IDs. Each must have exactly one active track in the requested project, a selected range inside its lifecycle, and active frame data in that range. Selection order does not matter: the earliest selected start frame determines the surviving object. No new object is created.
+
+#### Success: HTTP 200
+
+Example for project 1 with one FrameObject per frame:
+
+```json
+{
+  "status": "success",
+  "message": "Objects bulk linked successfully",
+  "data": {
+    "status": "success",
+    "message": "Objects bulk linked successfully",
+    "video_id": 1,
+    "master_object_id": 10,
+    "merged_object_ids": [20, 30],
+    "deactivated_object_ids": [20, 30],
+    "rows_updated_main_table": 200,
+    "start_frame": 1,
+    "end_frame": 300
+  }
+}
+```
+
+#### Errors: HTTP 400
+
+Missing fields, fewer than two objects, duplicate IDs, missing/foreign/inactive/ambiguous tracks, invalid ranges, and empty active selections use the existing envelope:
+
+```json
+{
+  "status": "error",
+  "message": "Invalid input data",
+  "errors": {"objects": ["Object IDs must be unique."]}
+}
+```
+
+Overlapping selected ranges use a dedicated response. Every overlapping pair is included, with numeric IDs and frame boundaries:
+
+```json
+{
+  "success": false,
+  "code": "TRAJECTORY_OVERLAP",
+  "message": "Bulk linking cannot be performed because some selected trajectories have overlapping frames.",
+  "overlaps": [
+    {"object_1_id": 10, "object_2_id": 20, "overlap_start": 80, "overlap_end": 100}
+  ]
+}
+```
+
+Touching inclusive boundaries overlap. Adjacent ranges such as 1–100 and 101–200 do not. No automatic overlap resolution occurs. Invalid selections and overlaps leave frame ownership, tracks, and history unchanged.
+
+#### Workflow and reuse
+
+1. `LinkObjectSerializer` validates request shape, project, uniqueness, and range ordering. Legacy pair validation remains on its existing path.
+2. `BulkLinkStrategy` enters one atomic transaction, locks the project and active selected tracks, and validates current lifecycle bounds and active frame availability.
+3. `BulkLinkOverlapValidator` checks all selected range pairs before any mutation.
+4. `SnapshotBuilder.build` captures compact FrameObject ownership (`id`, `object_id`) and track states. Affected frame rows are locked, and the same row IDs are used for both snapshots.
+5. `NormalLinkMutator.execute_mutations` merges each source into the earliest selected object. Shared lifecycle recalculation retains sources with remaining active frames and uses `ObjectLifecycleService.deactivate_object` only for empty sources. Frame rows are updated in place, retaining payloads and primary keys.
+6. `SnapshotLogger.log` records one `bulk_link` activity and one before/after snapshot, reusing redo-history clearing. A failure in any merge or snapshot write rolls back the entire operation.
+7. `UndoRedoService._restore_bulk_link` uses existing `_get_snapshot_rows`, `_bulk_update_rows`, and `_bulk_upsert_rows` helpers. Undo restores original ownership and every track state; redo restores the saved after state without validation or master selection. Existing project history controls `is_applied` and operation ordering.
+8. Export continues using its existing track rebuild and current database data. No exporter changes were made. Its rebuild can delete empty inactive tracks, so bulk snapshots include track identity and project fields, allowing the existing upsert helper to restore deleted tracks on undo.
+
+##### Partial selections
+
+For single and bulk linking, only active source rows inside the submitted range move. Unselected source frames remain unchanged, and the source stays active while active frames remain. Track bounds are recalculated from actual active frames. A source is deactivated only when no active frames remain. Submit full lifecycles to combine entire trajectories. Both selected-range overlaps and collisions with existing master data outside its selected range are rejected before mutation. Overlap merging also processes only the submitted source range: preferred-object data wins within the selected overlap, and collisions outside that overlap are rejected.
+
+#### Files changed
+
+| File | Reason |
+| --- | --- |
+| `src/video/serializers.py` | Nested bulk request serializer and conditional required fields; retain legacy validation. |
+| `src/video/services/link_object_service.py` | Bulk strategy, complete overlap detection, structured error, and service dispatch; reuse the existing normal mutator. |
+| `src/video/services/undo_redo_service.py` | Bulk snapshot replay using existing batch update/upsert helpers. |
+| `src/video/views.py` | Return typed overlap errors and update endpoint description. |
+| `src/video/test_bulk_link.py` | Database, serializer, endpoint, rollback, history, legacy-link/overlap, and export database-selection regression tests. |
+| `README-API.md` | API, workflow, reuse, partial-range semantics, and verification documentation. |
+
+#### Verification
+
+Run in the configured backend development environment:
+
+```sh
+python manage.py test src.video.test_bulk_link
+```
+
+Tests include row/payload preservation, chronological master selection, single history entry, exact undo/redo restoration, all overlapping pairs, inclusive boundaries, invalid selections, missing/foreign/inactive/empty tracks, late mutation failure, snapshot failure, redo-history clearing, partial-range behavior, export rebuild across undo/redo, legacy link/overlap round trips, and endpoint responses.
+
+Syntax parsing and `git diff --check` passed during implementation. Database tests could not run: available Python environments lacked Django and dependency download permission was declined. Export tests exercise the real database rebuild and active-track selection, not final TRK file serialization. PostgreSQL concurrency behavior also remains unverified.
+
+### Linking correctness and frontend handoff
+
+All linking modes reject duplicate active frame rows in the destination trajectory or selected source range before mutation. The error identifies the object and first duplicate frame. Inactive rows are excluded from this check; existing corrupted data is not automatically deleted.
+
+Backend linking now validates active tracks and current ranges inside a project-locked transaction. Single link rejects selected-range overlap and actual destination collisions. Bulk linking validates all selections before mutation and creates one history entry. Overlap honours submitted ranges and `preferred_object`, reports moved and deleted row counts separately, and retains unselected source frames. Inactive FrameObject rows are not moved.
+
+Undo/redo selection uses the same project lock as linking and track rebuilding. New single-link and overlap snapshots contain complete track identities, so undo can recreate tracks removed by export rebuild. Overlap redo also handles an empty after-frame snapshot (all source rows deleted). Legacy snapshots remain readable; already-deleted tracks missing identity fields in older snapshots cannot be reconstructed from those snapshots alone. These fixes do not repair data previously corrupted by incorrect linking.
+
+Frontend team action items (backend endpoint remains unchanged):
+
+| Area | Required change |
+| --- | --- |
+| `src/lib/api/linkObjects.ts` | Extend the request type to a union: pair payload for `link`/`overlap`, and `{operation: "bulk_link", objects: [...]}` for bulk. Substitute the actual numeric project ID in the URL. |
+| `Sidebar.tsx` success handler | Read `response.data`. For single link, select `object_track_object_1`; for overlap, select `winner_object`; for bulk, use `master_object_id` and returned bounds. Do not assume object 1 survives overlap. |
+| Automatic interpolation | Use the returned surviving ID and bounds, after a successful link. Never interpolate the deactivated loser. |
+| Active-object count | Refetch authoritative state. Do not always decrement by one: partial sources can remain active. Bulk also returns `deactivated_object_ids`; `merged_object_ids` lists processed sources, including partial sources that remain active. |
+| Bulk selection | Enable linking of more than two objects and send one bulk request. Do not loop over pair requests, because that creates separate history entries and allows partial completion. |
+| Overlap choice | Require an explicit preferred object for `overlap`. Do not silently retry failed bulk/single linking as overlap. |
+| Error display | Parse error JSON instead of showing the raw response text. Display `message` and field errors; for `TRAJECTORY_OVERLAP`, display the object pairs and inclusive overlap boundaries. |
+| Refresh | Refetch tracks, timeline, active count, and history after link/undo/redo. Treat server-returned lifecycle bounds and statuses as authoritative. |
+
+Frontend acceptance checks: choose object 2 as overlap winner; link a partial source that remains active; bulk-link three full tracks with one undo entry; reject overlapping bulk selections without changing UI state; undo and redo a completely overlapping merge.
+
+Backend regression command remains `python manage.py test src.video.test_bulk_link`. Added coverage checks single-link overlap rejection, master collisions outside selection, partial ranges, inactive rows/tracks, both preferred-object choices, complete-deletion overlap redo, rollback after deletion, and export followed by undo. Runtime execution is still unverified because Django is unavailable locally and container access was declined. No frontend code was changed as part of this backend correction.
 
 ### Interpolation modes
 

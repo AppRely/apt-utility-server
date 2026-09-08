@@ -490,20 +490,34 @@ class ActivityLogRequestSerializer(serializers.Serializer):
 # =============================
 
 
+class BulkLinkObjectSerializer(serializers.Serializer):
+    object_id = serializers.IntegerField()
+    start_frame = serializers.IntegerField()
+    end_frame = serializers.IntegerField()
+
+    def validate(self, data):
+        if data["start_frame"] > data["end_frame"]:
+            raise serializers.ValidationError("Invalid frame range.")
+        return data
+
+
 class LinkObjectSerializer(serializers.Serializer):
-    object_1_id = serializers.IntegerField(required=True)
-    object_1_start = serializers.IntegerField(required=True)
-    object_1_end = serializers.IntegerField(required=True)
+    object_1_id = serializers.IntegerField(required=False)
+    object_1_start = serializers.IntegerField(required=False)
+    object_1_end = serializers.IntegerField(required=False)
 
-    object_2_id = serializers.IntegerField(required=True)
-    object_2_start = serializers.IntegerField(required=True)
-    object_2_end = serializers.IntegerField(required=True)
+    object_2_id = serializers.IntegerField(required=False)
+    object_2_start = serializers.IntegerField(required=False)
+    object_2_end = serializers.IntegerField(required=False)
 
-    # Future support
+    objects = BulkLinkObjectSerializer(many=True, required=False, min_length=2)
+
+    # Supported operations
     operation = serializers.ChoiceField(
         choices=[
             "link",
             "overlap",
+            "bulk_link",
         ],
         default="link",
         required=False,
@@ -521,8 +535,30 @@ class LinkObjectSerializer(serializers.Serializer):
         if not project_id:
             raise serializers.ValidationError("Missing project_id in context.")
 
+        try:
+            project_id = serializers.IntegerField(min_value=1, max_value=2147483647).run_validation(project_id)
+        except serializers.ValidationError:
+            raise serializers.ValidationError({
+                "project_id": "Invalid project ID. Use a positive numeric project ID in the URL."
+            })
+
         if not Project.objects.filter(project_id=project_id).exists():
             raise serializers.ValidationError("Invalid project")
+
+        if data["operation"] == "bulk_link":
+            objects = data.get("objects")
+            if objects is None:
+                raise serializers.ValidationError({"objects": "This field is required."})
+            ids = [item["object_id"] for item in objects]
+            if len(ids) != len(set(ids)):
+                raise serializers.ValidationError({"objects": "Object IDs must be unique."})
+            data["project_id"] = project_id
+            return data
+
+        required = [f"object_{i}_{field}" for i in (1, 2) for field in ("id", "start", "end")]
+        missing = {field: "This field is required." for field in required if field not in data}
+        if missing:
+            raise serializers.ValidationError(missing)
 
         if data["object_1_id"] == data["object_2_id"]:
             raise serializers.ValidationError(
@@ -548,9 +584,10 @@ class LinkObjectSerializer(serializers.Serializer):
             object_1_track = ObjectTrack.objects.get(
                 project_id_id=project_id,
                 object_id=data["object_1_id"],
+                object_status=1,
             )
 
-        except ObjectTrack.DoesNotExist:
+        except (ObjectTrack.DoesNotExist, ObjectTrack.MultipleObjectsReturned):
 
             raise serializers.ValidationError(
                 {
@@ -563,9 +600,10 @@ class LinkObjectSerializer(serializers.Serializer):
             object_2_track = ObjectTrack.objects.get(
                 project_id_id=project_id,
                 object_id=data["object_2_id"],
+                object_status=1,
             )
 
-        except ObjectTrack.DoesNotExist:
+        except (ObjectTrack.DoesNotExist, ObjectTrack.MultipleObjectsReturned):
 
             raise serializers.ValidationError(
                 {

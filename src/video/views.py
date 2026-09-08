@@ -17,6 +17,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from .services.link_object_service import BulkLinkOverlapError
 from .services.activity_log_export_service import ActivityLogExportService
 
 from .models import Project, VideoFrame
@@ -827,7 +828,7 @@ class VideoViewSet(viewsets.ModelViewSet):
     ############################
     @swagger_auto_schema(
         method="put",
-        operation_description="Merge or overlap-link object_2 into object_1.",
+        operation_description="Link two objects, overlap-link, or bulk-link a list of trajectories.",
         request_body=LinkObjectSerializer,
         responses={
             200: "Objects linked successfully",
@@ -840,8 +841,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         PUT /api/v1/videos/{video_id}/link-objects/
 
-        Link two objects together. Supports both normal link and
-        overlap link operations.
+        Link two objects or bulk-link multiple selected trajectories.
         """
         try:
             serializer = LinkObjectSerializer(data=request.data, context={"project_id": pk},)
@@ -861,7 +861,15 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
+        except BulkLinkOverlapError as exc:
+            return Response(exc.payload, status=status.HTTP_400_BAD_REQUEST)
+
         except serializers.ValidationError as ve:
+            if isinstance(ve.detail, dict) and "project_id" in ve.detail:
+                return Response(
+                    {"status": "error", "message": str(ve.detail["project_id"])},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(
                 {
                     "status": "error",
