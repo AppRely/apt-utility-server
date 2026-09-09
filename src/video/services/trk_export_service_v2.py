@@ -264,12 +264,66 @@ class TrkBuilderExportService:
         if has_animal_conf:
             animal_conf_dtype = np.float32   # or use self.trk.pTrkAnimalConf... but force float
 
-        # Allocate container lists
-        coord_data = [None] * total_targets
-        conf_data = [None] * total_targets if self.trk.pTrkConf is not None else None
-        ts_data = [None] * total_targets if self.trk.pTrkTS is not None else None
-        tag_data = [None] * total_targets if self.trk.pTrkTag is not None else None
-        animal_conf_data = [None] * total_targets if has_animal_conf else None
+        # Every target slot must contain an array with the correct leading
+        # dimensions. TrkFile infers pTrk dimensions from slot zero, so a
+        # deleted/missing object zero represented by None produces a malformed
+        # tracklet even when later object IDs are still active.
+        coord_data = [
+            np.full(
+                (self.trk.nlandmarks, self.trk.d, 1),
+                np.nan,
+                dtype=coord_dtype,
+            )
+            for _ in range(total_targets)
+        ]
+        conf_data = (
+            [
+                np.full(
+                    self.trk.pTrkConf.size_rest + (1,),
+                    np.nan,
+                    dtype=conf_dtype,
+                )
+                for _ in range(total_targets)
+            ]
+            if self.trk.pTrkConf is not None
+            else None
+        )
+        ts_data = (
+            [
+                np.full(
+                    self.trk.pTrkTS.size_rest + (1,),
+                    -np.inf,
+                    dtype=ts_dtype,
+                )
+                for _ in range(total_targets)
+            ]
+            if self.trk.pTrkTS is not None
+            else None
+        )
+        tag_data = (
+            [
+                np.full(
+                    self.trk.pTrkTag.size_rest + (1,),
+                    False,
+                    dtype=tag_dtype,
+                )
+                for _ in range(total_targets)
+            ]
+            if self.trk.pTrkTag is not None
+            else None
+        )
+        animal_conf_data = (
+            [
+                np.full(
+                    self.trk.pTrkAnimalConf.size_rest + (1,),
+                    np.nan,
+                    dtype=animal_conf_dtype,
+                )
+                for _ in range(total_targets)
+            ]
+            if has_animal_conf
+            else None
+        )
 
         object_ids = sorted(self.objects.keys())
 
@@ -488,15 +542,18 @@ class TrkBuilderExportService:
 
         total_targets = self.trk.ntargets
 
+        # Placeholder slots contain one all-default frame. Keeping a valid
+        # interval makes their data and metadata shapes consistent; because
+        # their coordinates are NaN, they are ignored during re-upload.
         startframes = np.full(
             total_targets,
-            -1,
+            int(self.trk.T0),
             dtype=np.int32,
         )
 
         endframes = np.full(
             total_targets,
-            -2,
+            int(self.trk.T0),
             dtype=np.int32,
         )
 

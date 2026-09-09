@@ -2,6 +2,7 @@ from django.db import transaction
 
 from ..models import (
     ActivityLog,
+    Project,
     FrameObject,
     ObjectTrack,
     OperationSnapshot,
@@ -323,6 +324,21 @@ class UndoRedoService:
     #link
     ##############################################################
     @staticmethod
+    def _restore_link_tracks(rows):
+        complete = [row for row in rows if "project_id_id" in row and "object_id" in row]
+        legacy = [row for row in rows if "project_id_id" not in row or "object_id" not in row]
+        UndoRedoService._bulk_upsert_rows(ObjectTrack, "track_id", complete)
+        UndoRedoService._bulk_update_rows(ObjectTrack, "track_id", legacy)
+
+    @staticmethod
+    def _restore_bulk_link(state):
+        for name, pk in (("FrameObject", "id"), ("ObjectTrack", "track_id")):
+            rows = UndoRedoService._get_snapshot_rows(state, name)
+            restore = (UndoRedoService._bulk_upsert_rows if name == "ObjectTrack"
+                       else UndoRedoService._bulk_update_rows)
+            restore(UndoRedoService.MODEL_MAP[name], pk, rows)
+
+    @staticmethod
     def _undo_link(snapshot):
         """
         Undo link operation:
@@ -351,7 +367,7 @@ class UndoRedoService:
         if ot_ops.get("deleted"):
             Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
             pk = UndoRedoService._get_pk_field(ot_ops["deleted"][0])
-            UndoRedoService._bulk_update_rows(Model, pk, ot_ops["deleted"])
+            UndoRedoService._restore_link_tracks(ot_ops["deleted"])
 
     @staticmethod
     def _redo_link(snapshot):
@@ -382,7 +398,7 @@ class UndoRedoService:
         if ot_ops.get("created"):
             Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
             pk = UndoRedoService._get_pk_field(ot_ops["created"][0])
-            UndoRedoService._bulk_update_rows(Model, pk, ot_ops["created"])
+            UndoRedoService._restore_link_tracks(ot_ops["created"])
 
     #######################################################
     #swap
@@ -453,7 +469,10 @@ class UndoRedoService:
     # PUBLIC API
     # ------------------------------------------------
     @staticmethod
+    @transaction.atomic
     def undo(project_id: int) -> dict:
+        # Serialize history selection with linking and export track rebuilding.
+        Project.objects.select_for_update().get(pk=project_id)
         activity = (
             ActivityLog.objects.filter(project_id_id=project_id, is_applied=True).order_by("-activity_id").first()
         )
@@ -469,7 +488,7 @@ class UndoRedoService:
         with transaction.atomic():
             op = activity.operation
 
-            if op == "delete":
+            if op in ("delete", "BULK_DELETE"):
                 UndoRedoService._undo_delete(snapshot)
             # Keep break_object for activity rows recorded before break modes
             # were split into break_before and break_after.
@@ -477,6 +496,8 @@ class UndoRedoService:
                 UndoRedoService._undo_break(snapshot)
             elif op == "clip":
                 UndoRedoService._undo_clip(snapshot)
+            elif op == "bulk_link":
+                UndoRedoService._restore_bulk_link(snapshot.before_state)
             elif op == "link":
                 UndoRedoService._undo_link(snapshot)
             elif op == "overlap":
@@ -499,7 +520,10 @@ class UndoRedoService:
         }
 
     @staticmethod
+    @transaction.atomic
     def redo(project_id: int) -> dict:
+        # Serialize history selection with linking and export track rebuilding.
+        Project.objects.select_for_update().get(pk=project_id)
         activity = (
             ActivityLog.objects.filter(project_id_id=project_id, is_applied=False).order_by("activity_id").first()
         )
@@ -515,7 +539,7 @@ class UndoRedoService:
         with transaction.atomic():
             op = activity.operation
 
-            if op == "delete":
+            if op in ("delete", "BULK_DELETE"):
                 UndoRedoService._redo_delete(snapshot)
             # Keep break_object for activity rows recorded before break modes
             # were split into break_before and break_after.
@@ -523,6 +547,8 @@ class UndoRedoService:
                 UndoRedoService._redo_break(snapshot)
             elif op == "clip":
                 UndoRedoService._redo_clip(snapshot)
+            elif op == "bulk_link":
+                UndoRedoService._restore_bulk_link(snapshot.after_state)
             elif op == "link":
                 UndoRedoService._redo_link(snapshot)
             elif op == "overlap":
@@ -678,7 +704,7 @@ class UndoRedoService:
         if before_ot:
             Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
             pk = UndoRedoService._get_pk_field(before_ot[0])
-            UndoRedoService._bulk_update_rows(Model, pk, before_ot)
+            UndoRedoService._restore_link_tracks(before_ot)
 
     @staticmethod
     def _redo_overlap(snapshot):
@@ -692,7 +718,7 @@ class UndoRedoService:
         after_fo = UndoRedoService._get_snapshot_rows(snapshot.after_state, "FrameObject")
         after_ot = UndoRedoService._get_snapshot_rows(snapshot.after_state, "ObjectTrack")
 
-        if before_fo and after_fo:
+        if before_fo:
             Model = UndoRedoService.MODEL_MAP["FrameObject"]
             pk = UndoRedoService._get_pk_field(before_fo[0])
 
@@ -717,4 +743,4 @@ class UndoRedoService:
         if after_ot:
             Model = UndoRedoService.MODEL_MAP["ObjectTrack"]
             pk = UndoRedoService._get_pk_field(after_ot[0])
-            UndoRedoService._bulk_update_rows(Model, pk, after_ot)
+            UndoRedoService._restore_link_tracks(after_ot)

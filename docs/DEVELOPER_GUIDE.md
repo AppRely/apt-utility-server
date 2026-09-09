@@ -197,6 +197,18 @@ docker compose run --rm web python manage.py makemigrations video
 docker compose run --rm web python manage.py migrate
 ```
 
+To create migrations for all apps with model changes:
+
+```bash
+docker compose run --rm web python manage.py makemigrations
+```
+
+To apply migrations for a particular app (for example, `video`, including required dependencies):
+
+```bash
+docker compose run --rm web python manage.py migrate video
+```
+
 Inspect migration state:
 
 ```bash
@@ -209,7 +221,33 @@ Open PostgreSQL using the credentials already available inside the database cont
 docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```
 
+Inside `psql`, list tables and inspect a table, replacing `table_name` with a listed name:
+
+```sql
+\dt
+SELECT * FROM table_name LIMIT 10;
+```
+
 Do not delete committed migration files to resolve conflicts. Create a corrective migration or a migration merge.
+
+## Run a Command in the Web Container
+
+Replace `COMMAND` with the command and arguments you need:
+
+```bash
+docker compose run --rm web COMMAND
+```
+
+## Create a New App
+
+Create the destination directory first. For example, to add a `settlement` app under `src`:
+
+```bash
+mkdir src/settlement
+docker compose run --rm web python manage.py startapp settlement src/settlement
+```
+
+Set the generated app configuration's `name` to `src.settlement` and register it in `INSTALLED_APPS`.
 
 ## Important Development Commands
 
@@ -224,6 +262,20 @@ Do not delete committed migration files to resolve conflicts. Create a correctiv
 ## Code Quality
 
 The pre-commit configuration includes Ruff linting/formatting, repository safety checks, pyupgrade, django-upgrade, yesqa, and djLint.
+
+Install the Git hook:
+
+```bash
+docker compose run --rm web pre-commit install
+```
+
+To clear cached hook environments when troubleshooting:
+
+```bash
+docker compose run --rm web pre-commit clean
+```
+
+Run the configured hooks:
 
 ```bash
 docker compose run --rm web pre-commit run --all-files

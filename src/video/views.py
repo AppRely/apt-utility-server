@@ -6,19 +6,22 @@ from urllib import response
 
 import orjson
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Count, Max, Q
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from .services.link_object_service import BulkLinkOverlapError
 from .services.activity_log_export_service import ActivityLogExportService
 
 from .models import Project, VideoFrame
+from .pagination import ProjectListPagination
 from .serializers import (
     ActivityLogExportSerializer,
     ActivityLogRequestSerializer,
@@ -33,6 +36,7 @@ from .serializers import (
     LinkObjectSerializer,
     ListUniqueIdsSerializer,
     ObjectTrackDetailsSerializer,
+    ProjectListSerializer,
     ProjectSerializer,
     ProjectUploadSerializer,
     RedoSerializer,
@@ -64,6 +68,7 @@ import zlib
 from .services.confusion_service import ConfusionTableService
 
 from .services.unique_ids_service import UniqueIdsService
+from .services.object_deletion_service import ObjectDeletionService
 from .services.background_executor import executor
 from .services.confusion_store_service import ConfusionStoreService
 logger = logging.getLogger(__name__)
@@ -435,37 +440,57 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
 
     @swagger_auto_schema(
-        operation_description="Get list of all in-progress projects with essential details",
-        responses={200: ProjectSerializer(many=True), 500: "Server error"},
+        operation_description="Get a paginated list of active and completed projects with essential details",
+        manual_parameters=[
+            openapi.Parameter(
+                "page",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description="Page number (defaults to 1)",
+            ),
+            openapi.Parameter(
+                "page_size",
+                openapi.IN_QUERY,
+                type=openapi.TYPE_INTEGER,
+                required=False,
+                description="Projects per page (defaults to 18, maximum 100)",
+            ),
+        ],
+        responses={200: "Paginated project list", 404: "Invalid page", 500: "Server error"},
     )
-    @action(detail=False, methods=["get"], url_path="project-list")
+    @action(detail=False, methods=["get"], url_path="project-list", pagination_class=ProjectListPagination)
     def project_list(self, request):
         """
         GET /videos/project-list/
 
-        Retrieve a list of projects with active or completed status.
+        Retrieve a paginated list of projects with active or completed status.
         Returns projects that are currently in progress or completed,
         ordered by project identifier.
 
         Args:
             request (Request): Incoming HTTP request.
         Returns:
-            Response: List of serialized project records.
+            Response: Project records and page metadata.
         """
         try:
             projects = Project.objects.filter(
                 Q(project_status="inprogress") | Q(project_status="completed"), status="Completed"
+            ).annotate(
+                last_activity_updated_at=Max("activitylog__activity_updated_at"),
+                active_object_count=Count(
+                    "object_tracks__object_id",
+                    filter=Q(object_tracks__object_status=1),
+                    distinct=True,
+                ),
             ).order_by("project_id")
 
-            serializer = ProjectSerializer(projects, many=True)
-            return Response(
-                {
-                    "status": "success",
-                    "data": serializer.data,
-                },
-                status=status.HTTP_200_OK,
-            )
+            page = self.paginate_queryset(projects)
+            serializer = ProjectListSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
 
+        except APIException:
+            raise
         except Exception:
             logger.error("Failed to fetch projects", exc_info=True)
             return Response(
@@ -803,7 +828,7 @@ class VideoViewSet(viewsets.ModelViewSet):
     ############################
     @swagger_auto_schema(
         method="put",
-        operation_description="Merge or overlap-link object_2 into object_1.",
+        operation_description="Link two objects, overlap-link, or bulk-link a list of trajectories.",
         request_body=LinkObjectSerializer,
         responses={
             200: "Objects linked successfully",
@@ -816,8 +841,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         """
         PUT /api/v1/videos/{video_id}/link-objects/
 
-        Link two objects together. Supports both normal link and
-        overlap link operations.
+        Link two objects or bulk-link multiple selected trajectories.
         """
         try:
             serializer = LinkObjectSerializer(data=request.data, context={"project_id": pk},)
@@ -837,7 +861,15 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
+        except BulkLinkOverlapError as exc:
+            return Response(exc.payload, status=status.HTTP_400_BAD_REQUEST)
+
         except serializers.ValidationError as ve:
+            if isinstance(ve.detail, dict) and "project_id" in ve.detail:
+                return Response(
+                    {"status": "error", "message": str(ve.detail["project_id"])},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             return Response(
                 {
                     "status": "error",
@@ -1162,7 +1194,21 @@ class VideoViewSet(viewsets.ModelViewSet):
 
     @swagger_auto_schema(
         method="post",
-        operation_description="Delete (nullify) an active object from video_data within a given frame range. Operation is allowed only if the object is active.",
+        operation_description=(
+            "Soft-delete one object over a selected frame range, or bulk-delete "
+            "multiple objects over their individual lifecycle ranges."
+        ),
+        manual_parameters=[
+            openapi.Parameter(
+                name="operation_type",
+                in_=openapi.IN_QUERY,
+                description="Delete operation type. Defaults to single.",
+                type=openapi.TYPE_STRING,
+                enum=["single", "bulk"],
+                default="single",
+                required=False,
+            ),
+        ],
         request_body=DeleteObjectSerializer,
         responses={
             200: "Object delete operation completed successfully",
@@ -1172,35 +1218,76 @@ class VideoViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=["post"], url_path="objects/delete")
     def delete_object(self, request, pk=None):
-        """
-        POST /api/v1/videos/{project_id}/objects/delete/
-        Delete an active object from video_data within a specified
-        frame range. This operation is only permitted if the object is currently
-        active.
-        Args:
-            request (Request): Incoming HTTP request containing delete parameters
-                in the request body.
-            pk (int): Project identifier.
-        Returns:
-            Response: Result of the delete operation.
-        """
         try:
-            serializer = DeleteObjectSerializer(data=request.data, context={"project_id": pk})
+            project_id = int(pk)
+        except (TypeError, ValueError):
+            return Response(
+                {
+                    "status": "error",
+                    "message": (
+                        "Invalid project ID. Replace {project_id} in the URL "
+                        "with a valid numeric project ID, for example 432."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        operation_type = request.query_params.get("operation_type", "single")
+        if operation_type not in ("single", "bulk"):
+            return Response(
+                {
+                    "status": "error",
+                    "message": "Invalid operation_type. Supported values are single and bulk.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            serializer = DeleteObjectSerializer(
+                data=request.data,
+                context={
+                    "project_id": project_id,
+                    "operation_type": operation_type,
+                },
+            )
             serializer.is_valid(raise_exception=True)
-            result = serializer.save()
+
+            validated_data = serializer.validated_data
+            if operation_type == "bulk":
+                result = ObjectDeletionService.delete_bulk_objects(
+                    project_id=project_id,
+                    object_ids=validated_data["object_ids"],
+                    object_tracks=validated_data["obj_tracks"],
+                )
+                message = "Objects deleted successfully"
+            else:
+                result = ObjectDeletionService.delete_single_object(
+                    project_id=project_id,
+                    object_id=validated_data["object_id"],
+                    start_frame=validated_data["start_frame"],
+                    end_frame=validated_data["end_frame"],
+                    object_track=validated_data["obj_track"],
+                )
+                message = "Object deleted successfully"
+
             return Response(
                 {
                     "status": "success",
-                    "message": "Object deleted successfully",
+                    "message": message,
                     "data": result,
                 },
                 status=status.HTTP_200_OK,
             )
         except serializers.ValidationError as ve:
+            message = (
+                "Bulk delete validation failed"
+                if operation_type == "bulk"
+                else "Invalid input data"
+            )
             return Response(
                 {
                     "status": "error",
-                    "message": "Invalid input data",
+                    "message": message,
                     "errors": ve.detail,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1210,7 +1297,11 @@ class VideoViewSet(viewsets.ModelViewSet):
             return Response(
                 {
                     "status": "error",
-                    "message": "Something went wrong while deleting the object",
+                    "message": (
+                        "Something went wrong while deleting the object"
+                        if operation_type == "single"
+                        else "Something went wrong while deleting the objects"
+                    ),
                     "errors": str(e),
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

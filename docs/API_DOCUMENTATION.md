@@ -39,8 +39,14 @@ Use the dedicated upload and delete actions for the complete project lifecycle.
 | Method | Endpoint | Why It Is Used | Main Input |
 | --- | --- | --- | --- |
 | `POST` | `videos/project-upload/` | Save a video and TRK file, create the project, import tracking rows, and build trajectories. | Multipart: `project_name`, `video_file`, `tracking_file` |
-| `GET` | `videos/project-list/` | Populate a project selector with active/completed projects. | None |
+| `GET` | `videos/project-list/` | Populate a project selector with active/completed projects. | Query: optional `page` (default `1`), `page_size` (default `18`, max `100`) |
 | `DELETE` | `videos/{project_id}/delete-project/` | Remove a project, its related rows, media, and exports. | Project ID in path |
+
+For example, `GET videos/project-list/?page=2&page_size=10` returns the project records in `data` and a
+`pagination` object containing `current_page`, `page_size`, `total_pages`, `total_items`, `next`, and `previous`.
+Each project also contains `last_updated`, the latest `ActivityLog.activity_updated_at` datetime in the API's
+configured ISO-style UTC format, or `null` when the project has no activity.
+`active_object_count` contains the number of distinct related object IDs whose track `object_status` is `1`.
 
 The `VideoViewSet` is a `ModelViewSet`, so standard router routes are also present:
 
