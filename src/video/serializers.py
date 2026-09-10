@@ -1171,7 +1171,7 @@ class FrameObjectRangeNoFallbackSerializer(serializers.Serializer):
     """
 
     start = serializers.IntegerField(required=True, help_text="Start frame id (inclusive)")
-    end = serializers.IntegerField(required=True, help_text="End frame id (inclusive, max span 900)")
+    end = serializers.IntegerField(required=True, help_text="End frame id (inclusive)")
     video_id = serializers.IntegerField(required=True, help_text="Video ID (passed from view)")
 
     def validate(self, attrs):
@@ -1184,9 +1184,6 @@ class FrameObjectRangeNoFallbackSerializer(serializers.Serializer):
 
         if start > end:
             raise serializers.ValidationError({"start": "start must be <= end"})
-
-        if end - start + 1 > 900:
-            raise serializers.ValidationError({"end": "range cannot exceed 900 frames"})
 
         if not Project.objects.filter(project_id=video_id).exists():
             raise serializers.ValidationError({"video_id": "Invalid video_id"})

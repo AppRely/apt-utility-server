@@ -1417,7 +1417,7 @@ class VideoViewSet(viewsets.ModelViewSet):
     # Frame Object Range No Fallback
     ##########################
     @swagger_auto_schema(
-        operation_description="Return object/coordinate data for a consecutive frame range (max 900 frames) from DB without fallback.",
+        operation_description="Return object/coordinate data for a consecutive frame range from DB without fallback.",
         manual_parameters=[
             openapi.Parameter(
                 "start",
