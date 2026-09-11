@@ -6,10 +6,14 @@ from django.db.models import Q
 from ..models import (
     FrameObject,
     ObjectLinkingSuggestion,
+    VideoFrame,
 )
 
 
 class UniqueIdsService:
+
+    # Bound SQL expression size independently of the number of project tracks.
+    COORDINATE_BATCH_SIZE = 200
 
     @staticmethod
     def fetch(
@@ -79,9 +83,12 @@ class UniqueIdsService:
                 project_id=project_id,
                 source_track__object_id__in=object_ids,
             )
-            .select_related(
-                "source_track",
-                "target_track",
+            .values(
+                "source_track__object_id",
+                "target_track__object_id",
+                "match_score",
+                "rank",
+                "uncertainty",
             )
             .order_by(
                 "source_track__object_id",
@@ -91,10 +98,10 @@ class UniqueIdsService:
 
         linking_map = {}
 
-        for suggestion in linking_rows:
+        for suggestion in linking_rows.iterator(chunk_size=2000):
 
             source_object_id = (
-                suggestion.source_track.object_id
+                suggestion["source_track__object_id"]
             )
 
             linking_map.setdefault(
@@ -104,67 +111,54 @@ class UniqueIdsService:
                 suggestion
             )
 
-        # =====================================
-        # BUILD COORDINATE FILTERS
-        # =====================================
+        # Resolve project-scoped frame numbers once. The coordinate predicates
+        # then use indexed columns on frame_object only, without an OR across
+        # the frame_object/video_frame join for every endpoint.
+        endpoint_frames = {
+            frame_no
+            for row in aggregated_rows
+            for frame_no in (row["start_frame"], row["end_frame"])
+        }
+        frame_ids = dict(VideoFrame.objects.filter(
+            project_id_id=project_id, frame_no__in=endpoint_frames,
+        ).values_list("frame_no", "id"))
+        frame_numbers = {frame_id: frame_no for frame_no, frame_id in frame_ids.items()}
 
-        coordinate_filters = Q()
-
-        for row in aggregated_rows:
-
-            coordinate_filters |= Q(
-                object_id=row["object_id"],
-                frame__frame_no=row["start_frame"],
-            )
-
-            coordinate_filters |= Q(
-                object_id=row["object_id"],
-                frame__frame_no=row["end_frame"],
-            )
-
-        # =====================================
-        # FETCH COORDINATES
-        # =====================================
-
-        coordinate_rows = (
-            FrameObject.objects.filter(
-                coordinate_filters,
-                frame__project_id_id=project_id,
-                is_active=True,
-            )
-            .values(
-                "object_id",
-                "frame__frame_no",
-                "coordinates",
-            )
-        )
-
+        # Fetch the same endpoint coordinates in bounded batches. A single OR
+        # expression for every project track becomes expensive to build/plan
+        # and can exceed database expression limits on large projects.
         coordinate_map = {}
+        for offset in range(0, len(aggregated_rows), UniqueIdsService.COORDINATE_BATCH_SIZE):
+            batch = aggregated_rows[offset:offset + UniqueIdsService.COORDINATE_BATCH_SIZE]
+            endpoint_pairs = {
+                (row["object_id"], frame_no)
+                for row in batch
+                for frame_no in (row["start_frame"], row["end_frame"])
+            }
+            coordinate_filters = Q()
+            for object_id, frame_no in sorted(endpoint_pairs):
+                frame_id = frame_ids.get(frame_no)
+                if frame_id is not None:
+                    coordinate_filters |= Q(object_id=object_id, frame_id=frame_id)
+            if not coordinate_filters:
+                continue
 
-        for row in coordinate_rows:
-
-            coordinates = row.get(
-                "coordinates"
+            coordinate_rows = (
+                FrameObject.objects.filter(
+                    coordinate_filters,
+                    is_active=True,
+                )
+                .values("object_id", "frame_id", "coordinates")
             )
-
-            first_coordinate = None
-
-            if (
-                isinstance(coordinates, list)
-                and len(coordinates) > 0
-            ):
-
+            for row in coordinate_rows.iterator(chunk_size=2000):
+                coordinates = row.get("coordinates")
                 first_coordinate = (
                     coordinates[0]
+                    if isinstance(coordinates, list) and coordinates
+                    else None
                 )
-
-            coordinate_map[
-                (
-                    row["object_id"],
-                    row["frame__frame_no"],
-                )
-            ] = first_coordinate
-
+                coordinate_map[(row["object_id"], frame_numbers[row["frame_id"]])] = first_coordinate
+                
         # =====================================
         # FINAL RESPONSE
         # =====================================
@@ -202,16 +196,16 @@ class UniqueIdsService:
                 other_matches.append(
                     {
                         "object_id":
-                            match.target_track.object_id,
+                            match["target_track__object_id"],
 
                         "match_score":
                             round(
-                                match.match_score,
+                                match["match_score"],
                                 4,
                             ),
 
                         "rank":
-                            match.rank,
+                            match["rank"],
                     }
                 )
 
@@ -254,7 +248,7 @@ class UniqueIdsService:
 
                     "best_match":
                         (
-                            best_match.target_track.object_id
+                            best_match["target_track__object_id"]
                             if best_match
                             else None
                         ),
@@ -262,7 +256,7 @@ class UniqueIdsService:
                     "best_match_score":
                         (
                             round(
-                                best_match.match_score,
+                                best_match["match_score"],
                                 4,
                             )
                             if best_match
@@ -272,12 +266,12 @@ class UniqueIdsService:
                     "best_match_uncertainty":
                         (
                             round(
-                                best_match.uncertainty,
+                                best_match["uncertainty"],
                                 4,
                             )
                             if (
                                 best_match
-                                and best_match.uncertainty
+                                and best_match["uncertainty"]
                                 is not None
                             )
                             else None
@@ -285,7 +279,7 @@ class UniqueIdsService:
 
                     "second_match":
                         (
-                            second_match.target_track.object_id
+                            second_match["target_track__object_id"]
                             if second_match
                             else None
                         ),
@@ -293,7 +287,7 @@ class UniqueIdsService:
                     "second_match_score":
                         (
                             round(
-                                second_match.match_score,
+                                second_match["match_score"],
                                 4,
                             )
                             if second_match
