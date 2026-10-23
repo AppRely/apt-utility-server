@@ -97,7 +97,7 @@ These endpoints are read-only and support the editor's timeline, canvas, and obj
 | `GET` | `videos/frame/` | Load tracking data for one frame. If it is missing, use the nearest earlier stored frame. | Query: `video`, `frame` |
 | `GET` | `videos/{project_id}/frame-object-range/` | Load object coordinates for a frame window, with earlier-frame fallback for missing frames. | Query: `start`, `end`; maximum 900 frames |
 | `GET` | `videos/{project_id}/frame-object-range-no-fallback/` | Load only the data actually stored in a frame window; useful when fallback would hide gaps. | Query: `start`, `end`; maximum 900 frames |
-| `GET` | `videos/{project_id}/unique-ids/` | Populate an object list with each active trajectory's range and tracking coverage. | Optional paired query: `start_frame`, `end_frame` |
+| `GET` | `videos/{project_id}/unique-ids/` | Populate an object list with each active trajectory's range and tracking coverage; optional range is limited to 8,000 frames (inclusive). | Optional paired query: `start_frame`, `end_frame` |
 | `GET` | `videos/{project_id}/unique-ids/{object_id}/` | Check an object's lifecycle and whether a selected frame belongs to it. | Required query: `frame` |
 | `GET` | `videos/{project_id}/frame-timeline/` | Build compact presence/coordinate data for timeline rendering. | Query: `start`, `end`; optional comma-separated `object_ids` |
 

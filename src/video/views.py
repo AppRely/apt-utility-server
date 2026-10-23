@@ -649,7 +649,8 @@ class VideoViewSet(viewsets.ModelViewSet):
                 type=openapi.TYPE_INTEGER,
                 required=False,
                 description=(
-                    "Optional start frame"
+                    "Optional start frame; range may contain up to "
+                    "8,000 frames"
                 ),
             ),
 
@@ -659,7 +660,8 @@ class VideoViewSet(viewsets.ModelViewSet):
                 type=openapi.TYPE_INTEGER,
                 required=False,
                 description=(
-                    "Optional end frame"
+                    "Optional end frame; range may contain up to "
+                    "8,000 frames"
                 ),
             ),
         ],
