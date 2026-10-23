@@ -80,7 +80,7 @@ Video range requests return `206 Partial Content`; full streams return `200 OK`.
 
 | Method | Endpoint | Why It Is Used | Main Input |
 | --- | --- | --- | --- |
-| `GET` | `videos/{project_id}/unique-ids/` | List active object IDs and trajectory coverage, optionally within a frame range of up to 8,000 frames (inclusive). | Optional paired `start_frame`, `end_frame` |
+| `GET` | `videos/{project_id}/unique-ids/` | List active object IDs and trajectory coverage, optionally within a frame range of up to 10,000 frames (inclusive). | Optional paired `start_frame`, `end_frame` |
 | `GET` | `videos/{project_id}/unique-ids/{object_id}/` | Read one object's lifecycle and check whether a frame lies inside it. | Query: `frame` |
 | `PUT` | `videos/{project_id}/link-objects/` | Join separate or overlapping object trajectories. | IDs and start/end ranges for both objects |
 | `POST` | `videos/{project_id}/objects/break/` | Split one trajectory before or after a frame. | `object_id`, `break_frame`; optional query `break_type` |

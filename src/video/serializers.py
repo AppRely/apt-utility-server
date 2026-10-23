@@ -236,7 +236,7 @@ class FrameInfoSerializer(serializers.Serializer):
 
 class ListUniqueIdsSerializer(serializers.Serializer):
 
-    MAX_FRAME_RANGE = 8000
+    MAX_FRAME_RANGE = 10000
 
     start_frame = serializers.IntegerField(required=False, min_value=0,)
     end_frame = serializers.IntegerField(required=False, min_value=0,)

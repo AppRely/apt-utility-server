@@ -650,7 +650,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 required=False,
                 description=(
                     "Optional start frame; range may contain up to "
-                    "8,000 frames"
+                    "10,000 frames"
                 ),
             ),
 
@@ -661,7 +661,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 required=False,
                 description=(
                     "Optional end frame; range may contain up to "
-                    "8,000 frames"
+                    "10,000 frames"
                 ),
             ),
         ],
