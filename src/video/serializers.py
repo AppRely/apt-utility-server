@@ -236,6 +236,8 @@ class FrameInfoSerializer(serializers.Serializer):
 
 class ListUniqueIdsSerializer(serializers.Serializer):
 
+    MAX_FRAME_RANGE = 10000
+
     start_frame = serializers.IntegerField(required=False, min_value=0,)
     end_frame = serializers.IntegerField(required=False, min_value=0,)
 
@@ -292,6 +294,20 @@ class ListUniqueIdsSerializer(serializers.Serializer):
                     "start_frame cannot "
                     "be greater than end_frame"
                 )
+            )
+
+        if (
+            start_frame is not None
+            and end_frame is not None
+            and end_frame - start_frame + 1 > self.MAX_FRAME_RANGE
+        ):
+            raise serializers.ValidationError(
+                {
+                    "end_frame": (
+                        "The requested frame range cannot exceed "
+                        f"{self.MAX_FRAME_RANGE} frames."
+                    )
+                }
             )
 
         return data
