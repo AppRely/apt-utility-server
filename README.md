@@ -119,6 +119,64 @@ apt-utility-server/
 
 See the [User Guide](docs/USER_GUIDE.md) for Windows, Linux, and macOS environment-file commands and troubleshooting.
 
+## Installation and startup
+
+### Recommended: start the complete application with one command
+
+For a local client installation, place the three repositories in the same
+parent directory:
+
+```text
+APT_Setup/
+├── apt-utility-website/
+├── apt-utility-server/
+└── apt-utility-launcher/
+```
+
+Install Docker Engine, Docker Compose, Git, curl, and Bash. Then configure
+the backend environment file once:
+
+```bash
+cd ~/Documents/APT_Setup/apt-utility-server
+cp .env.dist .env       # only if .env does not already exist
+# Edit .env and set the required database/application values.
+```
+
+Make the launcher executable and start the complete application with one
+command:
+
+```bash
+cd ~/Documents/APT_Setup/apt-utility-launcher && ./start-apt.sh
+```
+
+The launcher checks Docker and Git, prepares both repositories on the
+`beta` branch, validates Compose files, builds and starts the backend,
+waits for Swagger, then builds and starts the frontend. It opens the
+frontend automatically when possible.
+
+Use the following command when the latest `beta` changes are required:
+
+```bash
+cd ~/Documents/APT_Setup/apt-utility-launcher && ./start-apt.sh --pull
+```
+
+Open the application at <http://localhost:3000>. The backend Swagger UI is
+available at <http://localhost:8002/swagger/>. Stop both launcher-managed
+stacks with:
+
+```bash
+cd ~/Documents/APT_Setup/apt-utility-launcher && ./stop-apt.sh
+```
+
+Startup and frontend/backend diagnostics are retained in
+`apt-utility-launcher/logs/backend.log` and `apt-utility-launcher/logs/frontend.log`.
+The launcher does not delete database volumes or `db-data` when stopping.
+
+### Backend only
+
+Use the [Quick Start](#quick-start) instructions above to install and run
+the backend without the launcher.
+
 ## Important Links
 
 With the local stack running:
